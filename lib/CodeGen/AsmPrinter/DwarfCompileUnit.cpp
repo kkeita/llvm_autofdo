@@ -102,9 +102,10 @@ unsigned DwarfCompileUnit::getOrCreateSourceID(const DIFile *File) {
   // extend .file to support this.
   unsigned CUID = Asm->OutStreamer->hasRawTextSupport() ? 0 : getUniqueID();
   if (!File)
-    return Asm->OutStreamer->EmitDwarfFileDirective(0, "", "", nullptr, CUID);
+    return Asm->OutStreamer->EmitDwarfFileDirective(0, "", "", nullptr, None, CUID);
   return Asm->OutStreamer->EmitDwarfFileDirective(
-      0, File->getDirectory(), File->getFilename(), getMD5AsBytes(File), CUID);
+      0, File->getDirectory(), File->getFilename(), getMD5AsBytes(File),
+      File->getSource(), CUID);
 }
 
 DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
@@ -197,7 +198,7 @@ DIE *DwarfCompileUnit::getOrCreateGlobalVariableDIE(
     if (Global) {
       const MCSymbol *Sym = Asm->getSymbol(Global);
       if (Global->isThreadLocal()) {
-        if (Asm->TM.Options.EmulatedTLS) {
+        if (Asm->TM.useEmulatedTLS()) {
           // TODO: add debug info for emulated thread local mode.
         } else {
           // FIXME: Make this work with -gsplit-dwarf.

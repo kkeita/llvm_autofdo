@@ -2571,7 +2571,7 @@ SDValue PPCTargetLowering::LowerGlobalTLSAddress(SDValue Op,
   // large models could be added if users need it, at the cost of
   // additional complexity.
   GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(Op);
-  if (DAG.getTarget().Options.EmulatedTLS)
+  if (DAG.getTarget().useEmulatedTLS())
     return LowerToTLSEmulatedModel(GA, DAG);
 
   SDLoc dl(GA);
@@ -10982,7 +10982,7 @@ SDValue PPCTargetLowering::ConvertSETCCToSubtract(SDNode *N,
 
   // Size of integers being compared has a critical role in the following
   // analysis, so we prefer to do this when all types are legal.
-  if (!DCI.isAfterLegalizeVectorOps())
+  if (!DCI.isAfterLegalizeDAG())
     return SDValue();
 
   // If all users of SETCC extend its value to a legal integer type

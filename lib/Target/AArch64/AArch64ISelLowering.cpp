@@ -3979,7 +3979,7 @@ AArch64TargetLowering::LowerELFGlobalTLSAddress(SDValue Op,
 SDValue AArch64TargetLowering::LowerGlobalTLSAddress(SDValue Op,
                                                      SelectionDAG &DAG) const {
   const GlobalAddressSDNode *GA = cast<GlobalAddressSDNode>(Op);
-  if (DAG.getTarget().Options.EmulatedTLS)
+  if (DAG.getTarget().useEmulatedTLS())
     return LowerToTLSEmulatedModel(GA, DAG);
 
   if (Subtarget->isTargetDarwin())
@@ -6244,96 +6244,235 @@ static bool resolveBuildVector(BuildVectorSDNode *BVN, APInt &CnstBits,
   return false;
 }
 
+// Try 64-bit splatted SIMD immediate.
+static SDValue tryAdvSIMDModImm64(unsigned NewOp, SDValue Op, SelectionDAG &DAG,
+                                 const APInt &Bits) {
+  if (Bits.getHiBits(64) == Bits.getLoBits(64)) {
+    uint64_t Value = Bits.zextOrTrunc(64).getZExtValue();
+    EVT VT = Op.getValueType();
+    MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v2i64 : MVT::f64;
+
+    if (AArch64_AM::isAdvSIMDModImmType10(Value)) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType10(Value);
+
+      SDLoc dl(Op);
+      SDValue Mov = DAG.getNode(NewOp, dl, MovTy,
+                                DAG.getConstant(Value, dl, MVT::i32));
+      return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+    }
+  }
+
+  return SDValue();
+}
+
+// Try 32-bit splatted SIMD immediate.
+static SDValue tryAdvSIMDModImm32(unsigned NewOp, SDValue Op, SelectionDAG &DAG,
+                                  const APInt &Bits,
+                                  const SDValue *LHS = nullptr) {
+  if (Bits.getHiBits(64) == Bits.getLoBits(64)) {
+    uint64_t Value = Bits.zextOrTrunc(64).getZExtValue();
+    EVT VT = Op.getValueType();
+    MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
+    bool isAdvSIMDModImm = false;
+    uint64_t Shift;
+
+    if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType1(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType1(Value);
+      Shift = 0;
+    }
+    else if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType2(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType2(Value);
+      Shift = 8;
+    }
+    else if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType3(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType3(Value);
+      Shift = 16;
+    }
+    else if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType4(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType4(Value);
+      Shift = 24;
+    }
+
+    if (isAdvSIMDModImm) {
+      SDLoc dl(Op);
+      SDValue Mov;
+
+      if (LHS)
+        Mov = DAG.getNode(NewOp, dl, MovTy, *LHS,
+                          DAG.getConstant(Value, dl, MVT::i32),
+                          DAG.getConstant(Shift, dl, MVT::i32));
+      else
+        Mov = DAG.getNode(NewOp, dl, MovTy,
+                          DAG.getConstant(Value, dl, MVT::i32),
+                          DAG.getConstant(Shift, dl, MVT::i32));
+
+      return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+    }
+  }
+
+  return SDValue();
+}
+
+// Try 16-bit splatted SIMD immediate.
+static SDValue tryAdvSIMDModImm16(unsigned NewOp, SDValue Op, SelectionDAG &DAG,
+                                  const APInt &Bits,
+                                  const SDValue *LHS = nullptr) {
+  if (Bits.getHiBits(64) == Bits.getLoBits(64)) {
+    uint64_t Value = Bits.zextOrTrunc(64).getZExtValue();
+    EVT VT = Op.getValueType();
+    MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
+    bool isAdvSIMDModImm = false;
+    uint64_t Shift;
+
+    if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType5(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType5(Value);
+      Shift = 0;
+    }
+    else if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType6(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType6(Value);
+      Shift = 8;
+    }
+
+    if (isAdvSIMDModImm) {
+      SDLoc dl(Op);
+      SDValue Mov;
+
+      if (LHS)
+        Mov = DAG.getNode(NewOp, dl, MovTy, *LHS,
+                          DAG.getConstant(Value, dl, MVT::i32),
+                          DAG.getConstant(Shift, dl, MVT::i32));
+      else
+        Mov = DAG.getNode(NewOp, dl, MovTy,
+                          DAG.getConstant(Value, dl, MVT::i32),
+                          DAG.getConstant(Shift, dl, MVT::i32));
+
+      return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+    }
+  }
+
+  return SDValue();
+}
+
+// Try 32-bit splatted SIMD immediate with shifted ones.
+static SDValue tryAdvSIMDModImm321s(unsigned NewOp, SDValue Op,
+                                    SelectionDAG &DAG, const APInt &Bits) {
+  if (Bits.getHiBits(64) == Bits.getLoBits(64)) {
+    uint64_t Value = Bits.zextOrTrunc(64).getZExtValue();
+    EVT VT = Op.getValueType();
+    MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
+    bool isAdvSIMDModImm = false;
+    uint64_t Shift;
+
+    if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType7(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType7(Value);
+      Shift = 264;
+    }
+    else if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType8(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType8(Value);
+      Shift = 272;
+    }
+
+    if (isAdvSIMDModImm) {
+      SDLoc dl(Op);
+      SDValue Mov = DAG.getNode(NewOp, dl, MovTy,
+                                DAG.getConstant(Value, dl, MVT::i32),
+                                DAG.getConstant(Shift, dl, MVT::i32));
+      return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+    }
+  }
+
+  return SDValue();
+}
+
+// Try 8-bit splatted SIMD immediate.
+static SDValue tryAdvSIMDModImm8(unsigned NewOp, SDValue Op, SelectionDAG &DAG,
+                                 const APInt &Bits) {
+  if (Bits.getHiBits(64) == Bits.getLoBits(64)) {
+    uint64_t Value = Bits.zextOrTrunc(64).getZExtValue();
+    EVT VT = Op.getValueType();
+    MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v16i8 : MVT::v8i8;
+
+    if (AArch64_AM::isAdvSIMDModImmType9(Value)) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType9(Value);
+
+      SDLoc dl(Op);
+      SDValue Mov = DAG.getNode(NewOp, dl, MovTy,
+                                DAG.getConstant(Value, dl, MVT::i32));
+      return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+    }
+  }
+
+  return SDValue();
+}
+
+// Try FP splatted SIMD immediate.
+static SDValue tryAdvSIMDModImmFP(unsigned NewOp, SDValue Op, SelectionDAG &DAG,
+                                  const APInt &Bits) {
+  if (Bits.getHiBits(64) == Bits.getLoBits(64)) {
+    uint64_t Value = Bits.zextOrTrunc(64).getZExtValue();
+    EVT VT = Op.getValueType();
+    bool isWide = (VT.getSizeInBits() == 128);
+    MVT MovTy;
+    bool isAdvSIMDModImm = false;
+
+    if ((isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType11(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType11(Value);
+      MovTy = isWide ? MVT::v4f32 : MVT::v2f32;
+    }
+    else if (isWide &&
+             (isAdvSIMDModImm = AArch64_AM::isAdvSIMDModImmType12(Value))) {
+      Value = AArch64_AM::encodeAdvSIMDModImmType12(Value);
+      MovTy = MVT::v2f64;
+    }
+
+    if (isAdvSIMDModImm) {
+      SDLoc dl(Op);
+      SDValue Mov = DAG.getNode(NewOp, dl, MovTy,
+                                DAG.getConstant(Value, dl, MVT::i32));
+      return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+    }
+  }
+
+  return SDValue();
+}
+
 SDValue AArch64TargetLowering::LowerVectorAND(SDValue Op,
                                               SelectionDAG &DAG) const {
-  BuildVectorSDNode *BVN =
-      dyn_cast<BuildVectorSDNode>(Op.getOperand(1).getNode());
   SDValue LHS = Op.getOperand(0);
-  SDLoc dl(Op);
   EVT VT = Op.getValueType();
 
+  BuildVectorSDNode *BVN =
+      dyn_cast<BuildVectorSDNode>(Op.getOperand(1).getNode());
+  if (!BVN) {
+    // AND commutes, so try swapping the operands.
+    LHS = Op.getOperand(1);
+    BVN = dyn_cast<BuildVectorSDNode>(Op.getOperand(0).getNode());
+  }
   if (!BVN)
     return Op;
 
-  APInt CnstBits(VT.getSizeInBits(), 0);
+  APInt DefBits(VT.getSizeInBits(), 0);
   APInt UndefBits(VT.getSizeInBits(), 0);
-  if (resolveBuildVector(BVN, CnstBits, UndefBits)) {
+  if (resolveBuildVector(BVN, DefBits, UndefBits)) {
+    SDValue NewOp;
+
     // We only have BIC vector immediate instruction, which is and-not.
-    CnstBits = ~CnstBits;
+    DefBits = ~DefBits;
+    if ((NewOp = tryAdvSIMDModImm32(AArch64ISD::BICi, Op, DAG,
+                                    DefBits, &LHS)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::BICi, Op, DAG,
+                                    DefBits, &LHS)))
+      return NewOp;
 
-    // We make use of a little bit of goto ickiness in order to avoid having to
-    // duplicate the immediate matching logic for the undef toggled case.
-    bool SecondTry = false;
-  AttemptModImm:
-
-    if (CnstBits.getHiBits(64) == CnstBits.getLoBits(64)) {
-      CnstBits = CnstBits.zextOrTrunc(64);
-      uint64_t CnstVal = CnstBits.getZExtValue();
-
-      if (AArch64_AM::isAdvSIMDModImmType1(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType1(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::BICi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType2(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType2(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::BICi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType3(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType3(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::BICi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(16, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType4(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType4(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::BICi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(24, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType5(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType5(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::BICi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType6(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType6(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::BICi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-    }
-
-    if (SecondTry)
-      goto FailedModImm;
-    SecondTry = true;
-    CnstBits = ~UndefBits;
-    goto AttemptModImm;
+    UndefBits = ~UndefBits;
+    if ((NewOp = tryAdvSIMDModImm32(AArch64ISD::BICi, Op, DAG,
+                                    UndefBits, &LHS)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::BICi, Op, DAG,
+                                    UndefBits, &LHS)))
+      return NewOp;
   }
 
-// We can always fall back to a non-immediate AND.
-FailedModImm:
+  // We can always fall back to a non-immediate AND.
   return Op;
 }
 
@@ -6444,96 +6583,38 @@ SDValue AArch64TargetLowering::LowerVectorOR(SDValue Op,
       return Res;
   }
 
-  BuildVectorSDNode *BVN =
-      dyn_cast<BuildVectorSDNode>(Op.getOperand(0).getNode());
-  SDValue LHS = Op.getOperand(1);
-  SDLoc dl(Op);
   EVT VT = Op.getValueType();
 
-  // OR commutes, so try swapping the operands.
+  SDValue LHS = Op.getOperand(0);
+  BuildVectorSDNode *BVN =
+      dyn_cast<BuildVectorSDNode>(Op.getOperand(1).getNode());
   if (!BVN) {
-    LHS = Op.getOperand(0);
-    BVN = dyn_cast<BuildVectorSDNode>(Op.getOperand(1).getNode());
+    // OR commutes, so try swapping the operands.
+    LHS = Op.getOperand(1);
+    BVN = dyn_cast<BuildVectorSDNode>(Op.getOperand(0).getNode());
   }
   if (!BVN)
     return Op;
 
-  APInt CnstBits(VT.getSizeInBits(), 0);
+  APInt DefBits(VT.getSizeInBits(), 0);
   APInt UndefBits(VT.getSizeInBits(), 0);
-  if (resolveBuildVector(BVN, CnstBits, UndefBits)) {
-    // We make use of a little bit of goto ickiness in order to avoid having to
-    // duplicate the immediate matching logic for the undef toggled case.
-    bool SecondTry = false;
-  AttemptModImm:
+  if (resolveBuildVector(BVN, DefBits, UndefBits)) {
+    SDValue NewOp;
 
-    if (CnstBits.getHiBits(64) == CnstBits.getLoBits(64)) {
-      CnstBits = CnstBits.zextOrTrunc(64);
-      uint64_t CnstVal = CnstBits.getZExtValue();
+    if ((NewOp = tryAdvSIMDModImm32(AArch64ISD::ORRi, Op, DAG,
+                                    DefBits, &LHS)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::ORRi, Op, DAG,
+                                    DefBits, &LHS)))
+      return NewOp;
 
-      if (AArch64_AM::isAdvSIMDModImmType1(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType1(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::ORRi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType2(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType2(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::ORRi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType3(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType3(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::ORRi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(16, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType4(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType4(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::ORRi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(24, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType5(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType5(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::ORRi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType6(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType6(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::ORRi, dl, MovTy, LHS,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-    }
-
-    if (SecondTry)
-      goto FailedModImm;
-    SecondTry = true;
-    CnstBits = UndefBits;
-    goto AttemptModImm;
+    if ((NewOp = tryAdvSIMDModImm32(AArch64ISD::ORRi, Op, DAG,
+                                    UndefBits, &LHS)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::ORRi, Op, DAG,
+                                    UndefBits, &LHS)))
+      return NewOp;
   }
 
-// We can always fall back to a non-immediate OR.
-FailedModImm:
+  // We can always fall back to a non-immediate OR.
   return Op;
 }
 
@@ -6561,226 +6642,71 @@ static SDValue NormalizeBuildVector(SDValue Op,
   return DAG.getBuildVector(VT, dl, Ops);
 }
 
+static SDValue ConstantBuildVector(SDValue Op, SelectionDAG &DAG) {
+  EVT VT = Op.getValueType();
+
+  APInt DefBits(VT.getSizeInBits(), 0);
+  APInt UndefBits(VT.getSizeInBits(), 0);
+  BuildVectorSDNode *BVN = cast<BuildVectorSDNode>(Op.getNode());
+  if (resolveBuildVector(BVN, DefBits, UndefBits)) {
+    SDValue NewOp;
+    if ((NewOp = tryAdvSIMDModImm64(AArch64ISD::MOVIedit, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm32(AArch64ISD::MOVIshift, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm321s(AArch64ISD::MOVImsl, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::MOVIshift, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm8(AArch64ISD::MOVI, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImmFP(AArch64ISD::FMOV, Op, DAG, DefBits)))
+      return NewOp;
+
+    DefBits = ~DefBits;
+    if ((NewOp = tryAdvSIMDModImm32(AArch64ISD::MVNIshift, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm321s(AArch64ISD::MVNImsl, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::MVNIshift, Op, DAG, DefBits)))
+      return NewOp;
+
+    DefBits = UndefBits;
+    if ((NewOp = tryAdvSIMDModImm64(AArch64ISD::MOVIedit, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm32(AArch64ISD::MOVIshift, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm321s(AArch64ISD::MOVImsl, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::MOVIshift, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm8(AArch64ISD::MOVI, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImmFP(AArch64ISD::FMOV, Op, DAG, DefBits)))
+      return NewOp;
+
+    DefBits = ~UndefBits;
+    if ((NewOp = tryAdvSIMDModImm32(AArch64ISD::MVNIshift, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm321s(AArch64ISD::MVNImsl, Op, DAG, DefBits)) ||
+        (NewOp = tryAdvSIMDModImm16(AArch64ISD::MVNIshift, Op, DAG, DefBits)))
+      return NewOp;
+  }
+
+  return SDValue();
+}
+
 SDValue AArch64TargetLowering::LowerBUILD_VECTOR(SDValue Op,
                                                  SelectionDAG &DAG) const {
-  SDLoc dl(Op);
   EVT VT = Op.getValueType();
+
+  // Try to build a simple constant vector.
   Op = NormalizeBuildVector(Op, DAG);
-  BuildVectorSDNode *BVN = cast<BuildVectorSDNode>(Op.getNode());
-
-  APInt CnstBits(VT.getSizeInBits(), 0);
-  APInt UndefBits(VT.getSizeInBits(), 0);
-  if (resolveBuildVector(BVN, CnstBits, UndefBits)) {
-    // We make use of a little bit of goto ickiness in order to avoid having to
-    // duplicate the immediate matching logic for the undef toggled case.
-    bool SecondTry = false;
-  AttemptModImm:
-
-    if (CnstBits.getHiBits(64) == CnstBits.getLoBits(64)) {
-      CnstBits = CnstBits.zextOrTrunc(64);
-      uint64_t CnstVal = CnstBits.getZExtValue();
-
-      // Certain magic vector constants (used to express things like NOT
-      // and NEG) are passed through unmodified.  This allows codegen patterns
-      // for these operations to match.  Special-purpose patterns will lower
-      // these immediates to MOVIs if it proves necessary.
-      if (VT.isInteger() && (CnstVal == 0 || CnstVal == ~0ULL))
-        return Op;
-
-      // The many faces of MOVI...
-      if (AArch64_AM::isAdvSIMDModImmType10(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType10(CnstVal);
-        if (VT.getSizeInBits() == 128) {
-          SDValue Mov = DAG.getNode(AArch64ISD::MOVIedit, dl, MVT::v2i64,
-                                    DAG.getConstant(CnstVal, dl, MVT::i32));
-          return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-        }
-
-        // Support the V64 version via subregister insertion.
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIedit, dl, MVT::f64,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
+  if (VT.isInteger()) {
+    // Certain vector constants, used to express things like logical NOT and
+    // arithmetic NEG, are passed through unmodified.  This allows special
+    // patterns for these operations to match, which will lower these constants
+    // to whatever is proven necessary.
+    BuildVectorSDNode *BVN = cast<BuildVectorSDNode>(Op.getNode());
+    if (BVN->isConstant())
+      if (ConstantSDNode *Const = BVN->getConstantSplatNode()) {
+        unsigned BitSize = VT.getVectorElementType().getSizeInBits();
+        APInt Val(BitSize,
+                  Const->getAPIntValue().zextOrTrunc(BitSize).getZExtValue());
+        if (Val.isNullValue() || Val.isAllOnesValue())
+          return Op;
       }
-
-      if (AArch64_AM::isAdvSIMDModImmType1(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType1(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType2(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType2(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType3(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType3(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(16, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType4(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType4(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(24, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType5(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType5(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType6(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType6(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType7(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType7(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVImsl, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(264, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType8(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType8(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVImsl, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(272, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType9(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType9(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v16i8 : MVT::v8i8;
-        SDValue Mov = DAG.getNode(AArch64ISD::MOVI, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      // The few faces of FMOV...
-      if (AArch64_AM::isAdvSIMDModImmType11(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType11(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4f32 : MVT::v2f32;
-        SDValue Mov = DAG.getNode(AArch64ISD::FMOV, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType12(CnstVal) &&
-          VT.getSizeInBits() == 128) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType12(CnstVal);
-        SDValue Mov = DAG.getNode(AArch64ISD::FMOV, dl, MVT::v2f64,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      // The many faces of MVNI...
-      CnstVal = ~CnstVal;
-      if (AArch64_AM::isAdvSIMDModImmType1(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType1(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType2(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType2(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType3(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType3(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(16, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType4(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType4(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(24, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType5(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType5(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(0, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType6(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType6(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v8i16 : MVT::v4i16;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNIshift, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(8, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType7(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType7(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNImsl, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(264, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-
-      if (AArch64_AM::isAdvSIMDModImmType8(CnstVal)) {
-        CnstVal = AArch64_AM::encodeAdvSIMDModImmType8(CnstVal);
-        MVT MovTy = (VT.getSizeInBits() == 128) ? MVT::v4i32 : MVT::v2i32;
-        SDValue Mov = DAG.getNode(AArch64ISD::MVNImsl, dl, MovTy,
-                                  DAG.getConstant(CnstVal, dl, MVT::i32),
-                                  DAG.getConstant(272, dl, MVT::i32));
-        return DAG.getNode(AArch64ISD::NVCAST, dl, VT, Mov);
-      }
-    }
-
-    if (SecondTry)
-      goto FailedModImm;
-    SecondTry = true;
-    CnstBits = UndefBits;
-    goto AttemptModImm;
   }
-FailedModImm:
+
+  if (SDValue V = ConstantBuildVector(Op, DAG))
+    return V;
 
   // Scan through the operands to find some interesting properties we can
   // exploit:
@@ -6793,16 +6719,21 @@ FailedModImm:
   //             select the values we'll be overwriting for the non-constant
   //             lanes such that we can directly materialize the vector
   //             some other way (MOVI, e.g.), we can be sneaky.
+  //   5) if all operands are EXTRACT_VECTOR_ELT, check for VUZP.
+  SDLoc dl(Op);
   unsigned NumElts = VT.getVectorNumElements();
   bool isOnlyLowElement = true;
   bool usesOnlyOneValue = true;
   bool usesOnlyOneConstantValue = true;
   bool isConstant = true;
+  bool AllLanesExtractElt = true;
   unsigned NumConstantLanes = 0;
   SDValue Value;
   SDValue ConstantValue;
   for (unsigned i = 0; i < NumElts; ++i) {
     SDValue V = Op.getOperand(i);
+    if (V.getOpcode() != ISD::EXTRACT_VECTOR_ELT)
+      AllLanesExtractElt = false;
     if (V.isUndef())
       continue;
     if (i > 0)
@@ -6833,6 +6764,67 @@ FailedModImm:
     DEBUG(dbgs() << "LowerBUILD_VECTOR: only low element used, creating 1 "
                     "SCALAR_TO_VECTOR node\n");
     return DAG.getNode(ISD::SCALAR_TO_VECTOR, dl, VT, Value);
+  }
+
+  if (AllLanesExtractElt) {
+    SDNode *Vector = nullptr;
+    bool Even = false;
+    bool Odd = false;
+    // Check whether the extract elements match the Even pattern <0,2,4,...> or
+    // the Odd pattern <1,3,5,...>.
+    for (unsigned i = 0; i < NumElts; ++i) {
+      SDValue V = Op.getOperand(i);
+      const SDNode *N = V.getNode();
+      if (!isa<ConstantSDNode>(N->getOperand(1)))
+        break;
+      SDValue N0 = N->getOperand(0);
+
+      // All elements are extracted from the same vector.
+      if (!Vector) {
+        Vector = N0.getNode();
+        // Check that the type of EXTRACT_VECTOR_ELT matches the type of
+        // BUILD_VECTOR.
+        if (VT.getVectorElementType() !=
+            N0.getValueType().getVectorElementType())
+          break;
+      } else if (Vector != N0.getNode()) {
+        Odd = false;
+        Even = false;
+        break;
+      }
+
+      // Extracted values are either at Even indices <0,2,4,...> or at Odd
+      // indices <1,3,5,...>.
+      uint64_t Val = N->getConstantOperandVal(1);
+      if (Val == 2 * i) {
+        Even = true;
+        continue;
+      }
+      if (Val - 1 == 2 * i) {
+        Odd = true;
+        continue;
+      }
+
+      // Something does not match: abort.
+      Odd = false;
+      Even = false;
+      break;
+    }
+    if (Even || Odd) {
+      SDValue LHS =
+          DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, VT, SDValue(Vector, 0),
+                      DAG.getConstant(0, dl, MVT::i64));
+      SDValue RHS =
+          DAG.getNode(ISD::EXTRACT_SUBVECTOR, dl, VT, SDValue(Vector, 0),
+                      DAG.getConstant(NumElts, dl, MVT::i64));
+
+      if (Even && !Odd)
+        return DAG.getNode(AArch64ISD::UZP1, dl, DAG.getVTList(VT, VT), LHS,
+                           RHS);
+      if (Odd && !Even)
+        return DAG.getNode(AArch64ISD::UZP2, dl, DAG.getVTList(VT, VT), LHS,
+                           RHS);
+    }
   }
 
   // Use DUP for non-constant splats. For f32 constant splats, reduce to
@@ -6886,16 +6878,23 @@ FailedModImm:
   // is better than the default, which will perform a separate initialization
   // for each lane.
   if (NumConstantLanes > 0 && usesOnlyOneConstantValue) {
-    SDValue Val = DAG.getNode(AArch64ISD::DUP, dl, VT, ConstantValue);
+    // Firstly, try to materialize the splat constant.
+    SDValue Vec = DAG.getSplatBuildVector(VT, dl, ConstantValue),
+            Val = ConstantBuildVector(Vec, DAG);
+    if (!Val) {
+      // Otherwise, materialize the constant and splat it.
+      Val = DAG.getNode(AArch64ISD::DUP, dl, VT, ConstantValue);
+      DAG.ReplaceAllUsesWith(Vec.getNode(), &Val);
+    }
+
     // Now insert the non-constant lanes.
     for (unsigned i = 0; i < NumElts; ++i) {
       SDValue V = Op.getOperand(i);
       SDValue LaneIdx = DAG.getConstant(i, dl, MVT::i64);
-      if (!isa<ConstantSDNode>(V) && !isa<ConstantFPSDNode>(V)) {
+      if (!isa<ConstantSDNode>(V) && !isa<ConstantFPSDNode>(V))
         // Note that type legalization likely mucked about with the VT of the
         // source operand, so we may have to convert it here before inserting.
         Val = DAG.getNode(ISD::INSERT_VECTOR_ELT, dl, VT, Val, V, LaneIdx);
-      }
     }
     return Val;
   }
@@ -8199,6 +8198,14 @@ bool AArch64TargetLowering::shouldConvertConstantLoadToIntImm(const APInt &Imm,
   unsigned Shift = (63 - LZ) / 16;
   // MOVZ is free so return true for one or fewer MOVK.
   return Shift < 3;
+}
+
+bool AArch64TargetLowering::isExtractSubvectorCheap(EVT ResVT, EVT SrcVT,
+                                                    unsigned Index) const {
+  if (!isOperationLegalOrCustom(ISD::EXTRACT_SUBVECTOR, ResVT))
+    return false;
+
+  return (Index == 0 || Index == ResVT.getVectorNumElements());
 }
 
 /// Turn vector tests of the signbit in the form of:

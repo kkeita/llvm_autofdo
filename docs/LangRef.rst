@@ -1561,6 +1561,8 @@ example:
     inlined into a function that has no ``"stack-probe-size"`` attribute
     at all, the resulting function has the ``"stack-probe-size"`` attribute
     of the callee.
+``"no-stack-arg-probe"``
+    This attribute disables ABI-required stack probes, if any.
 ``writeonly``
     On a function, this attribute indicates that the function may write to but
     does not read from memory.
@@ -3062,11 +3064,11 @@ optimizer can assume that it occurs in dead code.
     a: <deleted>
     b: unreachable
 
-These examples reiterate the ``fdiv`` example: a store *of* an undefined
-value can be assumed to not have any effect; we can assume that the
-value is overwritten with bits that happen to match what was already
-there. However, a store *to* an undefined location could clobber
-arbitrary memory, therefore, it has undefined behavior.
+A store *of* an undefined value can be assumed to not have any effect;
+we can assume that the value is overwritten with bits that happen to
+match what was already there. However, a store *to* an undefined
+location could clobber arbitrary memory, therefore, it has undefined
+behavior.
 
 .. _poisonvalues:
 
@@ -6401,10 +6403,10 @@ Both arguments must have identical types.
 Semantics:
 """"""""""
 
-The value produced is the floating point sum of the two operands. This
-instruction can also take any number of :ref:`fast-math flags <fastmath>`,
-which are optimization hints to enable otherwise unsafe floating point
-optimizations:
+The value produced is the floating-point sum of the two operands.
+This instruction can also take any number of :ref:`fast-math
+flags <fastmath>`, which are optimization hints to enable otherwise
+unsafe floating-point optimizations:
 
 Example:
 """"""""
@@ -6496,10 +6498,10 @@ Both arguments must have identical types.
 Semantics:
 """"""""""
 
-The value produced is the floating point difference of the two operands.
+The value produced is the floating-point difference of the two operands.
 This instruction can also take any number of :ref:`fast-math
 flags <fastmath>`, which are optimization hints to enable otherwise
-unsafe floating point optimizations:
+unsafe floating-point optimizations:
 
 Example:
 """"""""
@@ -6589,10 +6591,10 @@ Both arguments must have identical types.
 Semantics:
 """"""""""
 
-The value produced is the floating point product of the two operands.
+The value produced is the floating-point product of the two operands.
 This instruction can also take any number of :ref:`fast-math
 flags <fastmath>`, which are optimization hints to enable otherwise
-unsafe floating point optimizations:
+unsafe floating-point optimizations:
 
 Example:
 """"""""
@@ -6721,10 +6723,10 @@ Both arguments must have identical types.
 Semantics:
 """"""""""
 
-The value produced is the floating point quotient of the two operands.
+The value produced is the floating-point quotient of the two operands.
 This instruction can also take any number of :ref:`fast-math
 flags <fastmath>`, which are optimization hints to enable otherwise
-unsafe floating point optimizations:
+unsafe floating-point optimizations:
 
 Example:
 """"""""
@@ -6862,12 +6864,13 @@ Both arguments must have identical types.
 Semantics:
 """"""""""
 
-Return the same value as a libm '``fmod``' function but without trapping or
-setting ``errno``.
-
-The remainder has the same sign as the dividend. This instruction can also
-take any number of :ref:`fast-math flags <fastmath>`, which are optimization
-hints to enable otherwise unsafe floating-point optimizations:
+The value produced is the floating-point remainder of the two operands.
+This is the same output as a libm '``fmod``' function, but without any
+possibility of setting ``errno``. The remainder has the same sign as the 
+dividend.
+This instruction can also take any number of :ref:`fast-math
+flags <fastmath>`, which are optimization hints to enable otherwise
+unsafe floating-point optimizations:
 
 Example:
 """"""""

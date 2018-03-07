@@ -466,11 +466,13 @@ protected:
     friend class SDNode;
     friend class MemIntrinsicSDNode;
     friend class MemSDNode;
+    friend class SelectionDAG;
 
     uint16_t HasDebugValue : 1;
     uint16_t IsMemIntrinsic : 1;
+    uint16_t IsDivergent : 1;
   };
-  enum { NumSDNodeBits = 2 };
+  enum { NumSDNodeBits = 3 };
 
   class ConstantSDNodeBitfields {
     friend class ConstantSDNode;
@@ -661,6 +663,8 @@ public:
 
   bool getHasDebugValue() const { return SDNodeBits.HasDebugValue; }
   void setHasDebugValue(bool b) { SDNodeBits.HasDebugValue = b; }
+
+  bool isDivergent() const { return SDNodeBits.IsDivergent; }
 
   /// Return true if there are no uses of this node.
   bool use_empty() const { return UseList == nullptr; }
@@ -2331,6 +2335,17 @@ namespace ISD {
     return isa<StoreSDNode>(N) &&
       cast<StoreSDNode>(N)->getAddressingMode() == ISD::UNINDEXED;
   }
+
+  /// Attempt to match a unary predicate against a scalar/splat constant or
+  /// every element of a constant BUILD_VECTOR.
+  bool matchUnaryPredicate(SDValue Op,
+                           std::function<bool(ConstantSDNode *)> Match);
+
+  /// Attempt to match a binary predicate against a pair of scalar/splat
+  /// constants or every element of a pair of constant BUILD_VECTORs.
+  bool matchBinaryPredicate(
+      SDValue LHS, SDValue RHS,
+      std::function<bool(ConstantSDNode *, ConstantSDNode *)> Match);
 
 } // end namespace ISD
 

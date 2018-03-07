@@ -431,6 +431,7 @@ llvm::RecursivelyDeleteTriviallyDeadInstructions(Value *V,
 
   do {
     I = DeadInsts.pop_back_val();
+    salvageDebugInfo(*I);
 
     // Null out all of the instruction's operands to see if any operand becomes
     // dead as we go.
@@ -503,6 +504,8 @@ simplifyAndDCEInstruction(Instruction *I,
                           const DataLayout &DL,
                           const TargetLibraryInfo *TLI) {
   if (isInstructionTriviallyDead(I, TLI)) {
+    salvageDebugInfo(*I);
+
     // Null out all of the instruction's operands to see if any operand becomes
     // dead as we go.
     for (unsigned i = 0, e = I->getNumOperands(); i != e; ++i) {
@@ -1365,14 +1368,17 @@ void llvm::insertDebugValuesForPHIs(BasicBlock *BB,
   // propagate the info through the new PHI.
   LLVMContext &C = BB->getContext();
   for (auto PHI : InsertedPHIs) {
+    BasicBlock *Parent = PHI->getParent();
+    // Avoid inserting an intrinsic into an EH block.
+    if (Parent->getFirstNonPHI()->isEHPad())
+      continue;
+    auto PhiMAV = MetadataAsValue::get(C, ValueAsMetadata::get(PHI));
     for (auto VI : PHI->operand_values()) {
       auto V = DbgValueMap.find(VI);
       if (V != DbgValueMap.end()) {
         auto *DbgII = cast<DbgInfoIntrinsic>(V->second);
         Instruction *NewDbgII = DbgII->clone();
-        auto PhiMAV = MetadataAsValue::get(C, ValueAsMetadata::get(PHI));
         NewDbgII->setOperand(0, PhiMAV);
-        BasicBlock *Parent = PHI->getParent();
         auto InsertionPt = Parent->getFirstInsertionPt();
         assert(InsertionPt != Parent->end() && "Ill-formed basic block");
         NewDbgII->insertBefore(&*InsertionPt);
@@ -1486,6 +1492,11 @@ void llvm::replaceDbgValueForAlloca(AllocaInst *AI, Value *NewAllocaAddress,
 }
 
 void llvm::salvageDebugInfo(Instruction &I) {
+  // This function is hot. An early check to determine whether the instruction
+  // has any metadata to save allows it to return earlier on average.
+  if (!I.isUsedByMetadata())
+    return;
+
   SmallVector<DbgInfoIntrinsic *, 1> DbgUsers;
   findDbgUsers(DbgUsers, &I);
   if (DbgUsers.empty())

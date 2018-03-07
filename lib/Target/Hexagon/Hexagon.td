@@ -55,6 +55,8 @@ def FeatureMemNoShuf: SubtargetFeature<"mem_noshuf", "HasMemNoShuf", "false",
       "Supports mem_noshuf feature">;
 def FeatureDuplex : SubtargetFeature<"duplex", "EnableDuplex", "true",
       "Enable generation of duplex instruction">;
+def FeatureReservedR19: SubtargetFeature<"reserved-r19", "ReservedR19",
+      "true", "Reserve register R19">;
 
 //===----------------------------------------------------------------------===//
 // Hexagon Instruction Predicate Definitions.
@@ -359,4 +361,5 @@ def Hexagon : Target {
   let AssemblyParsers = [HexagonAsmParser];
   let AssemblyParserVariants = [HexagonAsmParserVariant];
   let AssemblyWriters = [HexagonAsmWriter];
+  let AllowRegisterRenaming = 1;
 }

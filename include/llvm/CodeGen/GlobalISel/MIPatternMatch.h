@@ -93,7 +93,7 @@ struct And<Pred, Preds...> : And<Preds...> {
 template <typename... Preds> struct Or {
   template <typename MatchSrc>
   bool match(MachineRegisterInfo &MRI, MatchSrc &&src) {
-    return true;
+    return false;
   }
 };
 
@@ -284,6 +284,11 @@ template <typename SrcTy>
 inline UnaryOp_match<SrcTy, TargetOpcode::G_FPTRUNC>
 m_GFPTrunc(const SrcTy &Src) {
   return UnaryOp_match<SrcTy, TargetOpcode::G_FPTRUNC>(Src);
+}
+
+template <typename SrcTy>
+inline UnaryOp_match<SrcTy, TargetOpcode::G_FABS> m_GFabs(const SrcTy &Src) {
+  return UnaryOp_match<SrcTy, TargetOpcode::G_FABS>(Src);
 }
 
 template <typename SrcTy>
