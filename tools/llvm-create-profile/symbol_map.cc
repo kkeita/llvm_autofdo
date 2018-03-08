@@ -645,57 +645,6 @@ void SymbolMap::DumpFuncLevelProfileCompare(const SymbolMap &map) const {
 
 typedef std::map<uint64_t, uint64_t> Histogram;
 
-static uint64_t AddSymbolProfileToHistogram(const Symbol *symbol,
-                                          Histogram *histogram) {
-  uint64_t total_count = 0;
-  for (const auto &pos_count : symbol->pos_counts) {
-    std::pair<Histogram::iterator, bool> ret =
-        histogram->insert(Histogram::value_type(pos_count.second.count, 0));
-    ret.first->second += pos_count.second.num_inst;
-    total_count += pos_count.second.count * pos_count.second.num_inst;
-  }
-  for (const auto &callsite_symbol : symbol->callsites) {
-    total_count += AddSymbolProfileToHistogram(callsite_symbol.second,
-                                               histogram);
-  }
-  return total_count;
-}
-/*
-void SymbolMap::ComputeWorkingSets() {
-  Histogram histogram;
-  uint64_t total_count = 0;
-
-  // Step 1. Compute histogram.
-  for (const auto &name_symbol : map_) {
-    total_count += AddSymbolProfileToHistogram(name_symbol.second, &histogram);
-  }
-  int bucket_num = 0;
-  uint64_t accumulated_count = 0;
-  uint64_t accumulated_inst = 0;
-  uint64_t one_bucket_count = total_count / (NUM_GCOV_WORKING_SETS + 1);
-
-  // Step 2. Traverse the histogram to update the working set.
-  for (Histogram::const_reverse_iterator iter = histogram.rbegin();
-       iter != histogram.rend() && bucket_num < NUM_GCOV_WORKING_SETS; ++iter) {
-    uint64_t count = iter->first;
-    uint64_t num_inst = iter->second;
-    while (count * num_inst + accumulated_count
-           > one_bucket_count * (bucket_num + 1)
-           && bucket_num < NUM_GCOV_WORKING_SETS) {
-      int64 offset =
-          (one_bucket_count * (bucket_num + 1) - accumulated_count) / count;
-      accumulated_inst += offset;
-      accumulated_count += offset * count;
-      num_inst -= offset;
-      working_set_[bucket_num].num_counters = accumulated_inst;
-      working_set_[bucket_num].min_counter = count;
-      bucket_num++;
-    }
-    accumulated_inst += num_inst;
-    accumulated_count += num_inst * count;
-  }
-}
-*/
 std::map<uint64_t, uint64_t> SymbolMap::GetSampledSymbolStartAddressSizeMap(
     const std::set<uint64_t> &sampled_addrs) const {
   // We depend on the fact that sampled_addrs is an ordered set.
