@@ -82,9 +82,9 @@ class ProfileDumper : public SymbolTraverser {
 
  protected:
   void DumpSourceInfo(SourceInfo info, int indent) {
-    printf("%*sDirectory name: %s\n", indent, " ", info.dir_name);
-    printf("%*sFile name:      %s\n", indent, " ", info.file_name);
-    printf("%*sFunction name:  %s\n", indent, " ", info.func_name);
+    printf("%*sDirectory name: %s\n", indent, " ", info.dir_name.c_str());
+    printf("%*sFile name:      %s\n", indent, " ", info.file_name.c_str());
+    printf("%*sFunction name:  %s\n", indent, " ", info.func_name.c_str());
     printf("%*sStart line:     %u\n", indent, " ", info.start_line);
     printf("%*sLine:           %u\n", indent, " ", info.line);
     printf("%*sDiscriminator:  %u\n", indent, " ", info.discriminator);
@@ -117,7 +117,7 @@ class ProfileDumper : public SymbolTraverser {
       Symbol *symbol = callsite_symbol.second;
       printf("  #%d: site\n", i);
       printf("    uint32: %u\n", site.first);
-      printf("    const char *: %s\n", site.second);
+      printf("    const char *: %s\n", site.second.c_str());
       printf("  #%d: symbol: ", i);
       symbol->Dump(0);
       printf("\n");
@@ -169,7 +169,7 @@ class ProfileDumper : public SymbolTraverser {
   }
 
   virtual void VisitCallsite(const Callsite &callsite) {
-    printf("VisitCallSite: %s\n", callsite.second);
+    printf("VisitCallSite: %s\n", callsite.second.c_str());
     printf("callsite.first: %u\n", callsite.first);
     printf("GetStringIndex(callsite.second): %u\n",
            GetStringIndex(callsite.second));

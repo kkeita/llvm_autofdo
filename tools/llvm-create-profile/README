@@ -1,0 +1,21 @@
+TODO:
+
+Add a way to capture the size of both function symbols and function inline symbol in the profile
+Add more testing
+Change the llvm-symbolizer to make it match addr2line behavior to simplify testing
+
+Change the sample loading/addling api
+
+1 - Have only one place where we decide whether we are using range_count_map or  address_count_map
+2 - Introduce SampleLocation as a way to represent a sample in a way that supports multiple objectfiles
+3 - Remove branch_count_map_ which doesnt seem used right now
+
+
+
+QUESTIONS on the algo :
+
+Details on the reason on how we use the lbr data :  aren't we over sampling by counting samples on all the ranges
+in the lbr
+What exactly is the branch_map doing ?
+
+Logging api ?
