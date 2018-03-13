@@ -37,24 +37,7 @@ void InstructionMap::BuildPerFunctionInstructionMap(
   }
   for (uint64_t addr = start_addr; addr < end_addr; addr++) {
     InstInfo *info = new InstInfo();
-    addr2line_->GetInlineStack(addr, &info->source_stack);/*
-      SourceStack & stack = info->source_stack;
-      SourceStack stack2;
-      LLVMAddr2line addr2(addr2line_->binary_name_, nullptr);
-      addr2.GetInlineStack(addr, &stack2);
-      std::cout << "new stack : " << std::endl ;
-      for (int i =0; i < stack.size() ; i++) {
-          std::cout << "Element : " << i << std::endl ;
-          std::cout << "Address : " << std::hex << stack2[i].addr << std::endl ;
-          std::cout << stack[i].func_name << " : " << stack2[i].func_name << std::endl;
-          std::cout << stack[i].line << " : " << stack2[i].line << std::endl;
-          std::cout << stack[i].start_line << " : " << stack2[i].start_line << std::endl;
-          std::cout << stack[i].file_name << " : " << stack2[i].file_name << std::endl;
-          std::cout << stack[i].dir_name << " : " << stack2[i].dir_name << std::endl;
-          std::cout << stack[i].discriminator << " : " << stack2[i].discriminator << std::endl;
-          std::cout << stack[i].func_name << " : " << stack2[i].func_name << std::endl;
-      }
-      */
+    addr2line_->GetInlineStack(addr, &info->source_stack);
     inst_map_.insert(InstMap::value_type(addr, info));
     if (info->source_stack.size() > 0) {
       symbol_map_->AddSourceCount(name, info->source_stack, 0, 1,

@@ -1,3 +1,17 @@
+create_llvm_prof replacement using llvm-symbolizer and llvm-readelf as replacement for the external dependencies.
+This is meant to be a dropped in replacement.
+
+
+
+
+
+
+
+
+
+
+
+
 TODO:
 
 Add a way to capture the size of both function symbols and function inline symbol in the profile
@@ -16,6 +30,7 @@ QUESTIONS on the algo :
 
 Details on the reason on how we use the lbr data :  aren't we over sampling by counting samples on all the ranges
 in the lbr
+
 What exactly is the branch_map doing ?
 
 Logging api ?

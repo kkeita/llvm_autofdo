@@ -24,13 +24,6 @@ llvm::cl::opt<std::string> Profile("profile", llvm::cl::desc( "Input profile fil
 llvm::cl::opt<std::string> Profiler("profiler", llvm::cl::desc( "Input profile type"),llvm::cl::Required);
 llvm::cl::opt<std::string> Out("out", llvm::cl::desc( "Output profile file name"),llvm::cl::Required);
 llvm::cl::opt<std::string> Binary("binary", llvm::cl::desc( "Binary file name"),llvm::cl::Required);
-
-
-//enum OutputFileFormat {
-//    Text,
-//    Binary,
-//};
-
 llvm::cl::opt<std::string> Format("format", llvm::cl::desc( "Output file format"),llvm::cl::Required);
 
 
