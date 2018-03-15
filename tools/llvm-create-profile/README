@@ -1,17 +1,6 @@
 create_llvm_prof replacement using llvm-symbolizer and llvm-readelf as replacement for the external dependencies.
 This is meant to be a dropped in replacement.
 
-
-
-
-
-
-
-
-
-
-
-
 TODO:
 
 Add a way to capture the size of both function symbols and function inline symbol in the profile

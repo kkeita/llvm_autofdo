@@ -63,6 +63,7 @@ uint64_t TextSampleReaderWriter::GetTotalSampleCount() const {
 
 
 bool TextSampleReaderWriter::readProfile() {
+
   FILE *fp = fopen(profileFile.c_str(), "r");
   if (fp == NULL) {
     llvm::errs() << "Cannot open " << profileFile << "to read";
@@ -123,7 +124,7 @@ bool TextSampleReaderWriter::readProfile() {
   }
   fclose(fp);
 
-
+    total_count_ = 0;
   if (range_count_map_.size() > 0) {
     for (const auto &range_count : range_count_map_) {
       total_count_ += range_count.second * (range_count.first.begin.offset -
@@ -135,8 +136,25 @@ bool TextSampleReaderWriter::readProfile() {
     }
   }
 
+    Dump(std::cout);
   return true;
 }
+
+
+    void TextSampleReaderWriter::Dump(std::ostream & out) {
+        out << "Address count " << "\n";
+        for (auto const & addr : address_count_map())
+            out << std::hex << addr.first << std::dec << " : " << addr.second << std::endl ;
+
+        out << "Range count " << std::endl ;
+        for (auto const & range : range_count_map())
+            out << std::hex << range.first << std::dec << " : " << range.second << std::endl;
+
+        out << "Branch count " << std::endl ;
+        for (auto const & branch : branch_count_map())
+            out << std::hex << branch.first << std::dec << " : " << branch.second << std::endl;
+
+    };
 
 bool TextSampleReaderWriter::Write(const char *aux_info) {
   return false ;

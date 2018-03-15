@@ -26,13 +26,15 @@
 #include <vector>
 
 #include "source_info.h"
-
+#include "PerfSampleReader.h"
 // Macros from gcc (profile.c)
 //#define NUM_GCOV_WORKING_SETS 128
 //#define WORKING_SET_INSN_PER_BB 10
 
 namespace autofdo {
 
+    using experimental::InstructionLocation;
+    using experimental::Range ;
 typedef std::map<string, uint64_t> CallTargetCountMap;
 typedef std::pair<string, uint64_t> TargetCountPair;
 typedef std::vector<TargetCountPair> TargetCountPairs;
@@ -160,7 +162,7 @@ class Symbol {
 // Maps function name to actual symbol. (Top level map).
 typedef map<string, Symbol *> NameSymbolMap;
 // Maps symbol's start address to its name and size.
-typedef std::map<uint64_t, std::pair<string, uint64_t> > AddressSymbolMap;
+typedef std::map<uint64_t, std::pair<string, uint64_t>> AddressSymbolMap;
 // Maps from symbol's name to its start address.
 typedef std::map<string, uint64_t> NameAddressMap;
 // Maps function name to alias names.
@@ -195,8 +197,10 @@ class SymbolMap {
   void set_count_threshold(int64_t n) {count_threshold_ = n;}
   int64_t count_threshold() const {return count_threshold_;}
 
+    // TODO : fix this
   // Returns true if the count is large enough to be emitted.
   bool ShouldEmit(int64_t count) const {
+      return true ;
     assert(count_threshold_> 0);
     return count > count_threshold_;
   }
@@ -306,40 +310,8 @@ class SymbolMap {
   // overlap = sum(min(count_i_1/total_1, count_i_2/total_2))
   float Overlap(const SymbolMap &map) const;
 
-  // Iterates the address count map to calculate the working set of the profile.
-  // Working set is a map from bucket_num to total number of instructions that
-  // consumes bucket_num/NUM_GCOV_WORKING_SETS of dynamic instructions. This
-  // mapping indicates how large is the dynamic hot code region during run time.
-  //
-  // To compute working set, the following algorithm is used:
-  //
-  // Input: map from instruction to execution count.
-  // Output: working set.
-  //   1. compute histogram: map (execution count --> number of instructions)
-  //   2. traverse the histogram in decending order
-  //     2.1 calculate accumulated_count.
-  //     2.2 compute the working set bucket number.
-  //     2.3 update the working set bucket from last update to calculated bucket
-  //         number.
-  //void ComputeWorkingSets();
 
-  // Traverses all symbols that has been sampled (appears in sampled_functions).
-  // Uses addr2line to derive  symbol's source info and update the symbol.
-  void UpdateSymbolMap(const Addr2line *addr2line,
-                       const std::map<uint64_t, uint64_t> &sampled_functions);
 
-  // Returns a map from start addresses of functions that have been sampled to
-  // the size of the function.
-  std::map<uint64_t, uint64_t> GetSampledSymbolStartAddressSizeMap(
-      const std::set<uint64_t> &sampled_addrs) const;
-
-  // Returns a map from start addresses of functions that have been sampled in
-  // the old profile that has already been loaded, to the size of the function.
-  // This function is used by profile_update, which takes the old profile as
-  // input, and use the debug/module info in the new binary to update the old
-  // profile's module info. For the efficiency consideration, we only need to
-  // read debug info for the symbols that has been sampled in the old profile.
-  std::map<uint64_t, uint64_t> GetLegacySymbolStartAddressSizeMap() const;
 
   void Dump() const;
   void DumpFuncLevelProfileCompare(const SymbolMap &map) const;
@@ -359,7 +331,16 @@ class SymbolMap {
       name_addr_map_[addr_symbol.second.first] = addr_symbol.first;
     }
   }
-
+public:
+    void dumpaddressmap() {
+        for (auto & addr : address_symbol_map_) {
+            std::cout << std::hex << "offset : " << addr.first
+                                 << ", name : "<<  addr.second.first <<
+                                 std::dec << ", size : "<< addr.second.second
+                                 << std::endl ;
+        }
+    }
+private:
   NameSymbolMap map_;
   NameAliasMap name_alias_map_;
   NameAddressMap name_addr_map_;

@@ -25,19 +25,12 @@
 namespace autofdo {
 
 Addr2line *Addr2line::Create(const string &binary_name) {
-  return CreateWithSampledFunctions(binary_name, NULL);
+  return CreateWithSampledFunctions();
 }
 
-Addr2line *Addr2line::CreateWithSampledFunctions(
-    const string &binary_name,
-    const std::map<uint64_t, uint64_t> *sampled_functions) {
-  Addr2line *addr2line = new LLVMAddr2line(binary_name,sampled_functions);
-  if (!addr2line->Prepare()) {
-    delete addr2line;
-    return NULL;
-  } else {
-    return addr2line;
-  }
+Addr2line *Addr2line::CreateWithSampledFunctions() {
+  Addr2line *addr2line = new LLVMAddr2line();
+    return addr2line ;
 }
 
 

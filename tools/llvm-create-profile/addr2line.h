@@ -23,27 +23,24 @@
 #include "source_info.h"
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/Support/Path.h"
-
+#include "PerfSampleReader.h"
 namespace autofdo {
     using namespace std ;
+    using experimental::InstructionLocation;
     class Addr2line {
     public:
+        Addr2line() {};
         explicit Addr2line(const string &binary_name) : binary_name_(binary_name) {}
 
         virtual ~Addr2line() {}
 
         static Addr2line *Create(const string &binary_name);
 
-        static Addr2line *CreateWithSampledFunctions(
-                const string &binary_name,
-                const std::map<uint64_t, uint64_t> *sampled_functions);
+        static Addr2line *CreateWithSampledFunctions();
 
-        // Reads the binary to prepare necessary binary in data.
-        // Returns True on success.
-        virtual bool Prepare() = 0;
 
         // Stores the inline stack of ADDR in STACK.
-        virtual void GetInlineStack(uint64_t addr, SourceStack *stack) const = 0;
+        virtual void GetInlineStack(InstructionLocation, SourceStack *stack) =0 ;
 
         string binary_name_;
 
@@ -63,9 +60,8 @@ namespace autofdo {
 
     class LLVMAddr2line : public Addr2line {
     public:
-        explicit LLVMAddr2line(const string &binary_name,
-                               const std::map<uint64_t, uint64_t> *sampled_functions) :
-                Addr2line(binary_name),
+        explicit LLVMAddr2line() :
+                Addr2line(),
                 symbolizerOption(
                         /*FunctionNameKind PrintFunctions =*/ llvm::symbolize::FunctionNameKind::LinkageName,
                         /*bool UseSymbolTable =*/ false,
@@ -78,19 +74,13 @@ namespace autofdo {
 
         virtual ~LLVMAddr2line() {};
 
-        bool Prepare() override {
-            return true;
-        };
-
-        void GetInlineStack(uint64_t address, SourceStack *stack) const override {
-            auto st = symbolizer.symbolizeInlinedCode(this->binary_name_, address);
+        void GetInlineStack(InstructionLocation loc, SourceStack *stack) override {
+            llvm::Expected<llvm::DIInliningInfo> st = std::move(symbolizer.symbolizeInlinedCode(loc.objectFile, loc.offset));
             if (st) {
                 auto ss = st.get();
                 SourceStack &mystack = *stack; //;(ss.getNumberOfFrames());
                 mystack.resize(ss.getNumberOfFrames());
                 for (int i = 0; i < ss.getNumberOfFrames(); i++) {
-                    //ss.getFrame(i).dump(llvm::errs());
-                    //mystack[i].addr = address;
                     mystack[i].file_name =
                             llvm::sys::path::filename(ss.getFrame(i).FileName.c_str());
                     mystack[i].dir_name; //= ss.getFrame(i).FileName.c_str();
@@ -100,7 +90,11 @@ namespace autofdo {
                     mystack[i].line = ss.getFrame(i).Line;
 
                 }
-            };
+            } else {
+                std::cerr << "failled to get stack object for location \n" << std::hex << loc << std::dec;
+                st.takeError();
+            }
+
         };
     private:
         llvm::symbolize::LLVMSymbolizer::Options symbolizerOption;

@@ -5,18 +5,28 @@
 #include <set>
 #include <algorithm>
 #include <map>
-#include <optional>
 #include<regex>
+#include "assert.h"
 
-
-
+#pragma once
 namespace autofdo {
 
     namespace experimental {
+
         struct InstructionLocation {
+            InstructionLocation operator++(){
+                offset++;
+            }
+            uint64_t operator-(const InstructionLocation &rhs) const {
+                assert(objectFile == rhs.objectFile);
+                assert(offset >= rhs.offset );
+                return offset - rhs.offset;
+            }
             bool operator<(const InstructionLocation &rhs) const {
+                assert(this->objectFile == rhs.objectFile);
                 return offset < rhs.offset;
             }
+
 
             bool operator>(const InstructionLocation &rhs) const {
                 return rhs < *this;
@@ -125,6 +135,7 @@ namespace autofdo {
                 os << "begin: " << range.begin << " end: " << range.end;
                 return os;
             }
+
 
             bool operator<(const Range &rhs) const {
                 if (begin < rhs.begin)

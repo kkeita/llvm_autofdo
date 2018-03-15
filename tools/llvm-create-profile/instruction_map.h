@@ -22,13 +22,13 @@
 #include <utility>
 
 #include "symbol_map.h"
-
+#include "PerfSampleReader.h"
 
 namespace autofdo {
 using namespace std;
 class SampleReader;
 class Addr2line;
-
+using experimental::InstructionLocation;
 // InstructionMap stores all the disassembled instructions in
 // the binary, and maps it to its information.
 class InstructionMap {
@@ -52,8 +52,8 @@ class InstructionMap {
   }
 
   // Builds instruction map for a function.
-  void BuildPerFunctionInstructionMap(const string &name, uint64_t start_addr,
-                                      uint64_t end_addr);
+  void BuildPerFunctionInstructionMap(const string &name, InstructionLocation start_addr,
+                                      InstructionLocation end_addr);
 
   // Contains information about each instruction.
   struct InstInfo {
@@ -64,7 +64,7 @@ class InstructionMap {
     SourceStack source_stack;
   };
 
-  typedef map<uint64_t, InstInfo *> InstMap;
+  typedef map<InstructionLocation, InstInfo *> InstMap;
   const InstMap &inst_map() const {
     return inst_map_;
   }

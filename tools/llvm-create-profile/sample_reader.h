@@ -29,7 +29,7 @@ namespace autofdo {
 
 using namespace std;
 using experimental::InstructionLocation;
-using experimental::Range
+using experimental::Range;
     using experimental::Branch;
 // All counter type is using uint64_t instead of int64 because GCC's gcov
 // functions only takes unsigned variables.
@@ -41,17 +41,16 @@ typedef map<Branch, uint64_t> BranchCountMap;
 
     class AbstractSampleReader {
     public:
-        virtual const AddressCountMap &address_count_map() const;
-        virtual const RangeCountMap &range_count_map() const;
-        virtual const BranchCountMap &branch_count_map() const;
-        virtual bool readProfile();
-        virtual bool ReadAndSetTotalCount();
-        std::vector<InstructionLocation> GetSampledAddresses() const;
-
+        ~AbstractSampleReader() {};
+        virtual const AddressCountMap &address_count_map() const =0;
+        virtual const RangeCountMap &range_count_map() const =0;
+        virtual const BranchCountMap &branch_count_map() const =0;
+        virtual bool readProfile() =0;
+        //virtual bool ReadAndSetTotalCount();
         // Returns the total sampled count.
-        uint64_t GetTotalSampleCount() const;
+        virtual uint64_t GetTotalSampleCount() const =0;
         // Returns the max count.
-        uint64_t GetTotalCount() const ;
+        virtual uint64_t GetTotalCount() const = 0;
     };
 
 
@@ -71,9 +70,9 @@ typedef map<Branch, uint64_t> BranchCountMap;
 // addr_n:count_n
 class TextSampleReaderWriter : public AbstractSampleReader {
  public:
-  explicit TextSampleReaderWriter(const string &profile_file,const std::string ojectFile) :
+  explicit TextSampleReaderWriter(const string &profile_file,const std::string objectFile) :
           objectFile(objectFile),
-          profileFile(profileFile){ };
+          profileFile(profile_file){ };
     virtual bool readProfile() override;
 
     const AddressCountMap &address_count_map() const {
@@ -95,14 +94,14 @@ class TextSampleReaderWriter : public AbstractSampleReader {
     // Returns the total sampled count.
     uint64_t GetTotalSampleCount() const;
     // Returns the max count.
-    uint64_t GetTotalCount() const {
+    uint64_t GetTotalCount() const override  {
       return total_count_;
     }
   // Writes the profile to file, and appending aux_info at the end.
   bool Write(const char *aux_info);
 
  private:
-
+    void Dump(std::ostream & out);
     uint64_t total_count_;
     std::string objectFile;
     std::string profileFile;

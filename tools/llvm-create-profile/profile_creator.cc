@@ -54,12 +54,12 @@ bool ProfileCreator::ReadSample(const string &input_profile_name,
       llvm::errs() << "Unsupported profiler type: " << profiler;
 
   } else if (profiler == "text") {
-    sample_reader_ = new TextSampleReaderWriter(input_profile_name);
+    sample_reader_ = new TextSampleReaderWriter(input_profile_name,this->binary_);
   } else {
     llvm::errs() << "Unsupported profiler type: " << profiler;
     return false;
   }
-  if (!sample_reader_->ReadAndSetTotalCount()) {
+  if (!sample_reader_->readProfile()) {
     llvm::errs() << "Error reading profile.";
     return false;
   }
@@ -68,11 +68,7 @@ bool ProfileCreator::ReadSample(const string &input_profile_name,
 
 bool ProfileCreator::ComputeProfile(SymbolMap *symbol_map,
                                     Addr2line **addr2line) {
-  std::set<InstructionLocation> sampled_addrs = sample_reader_->GetSampledAddresses();
-  std::map<uint64_t, uint64_t> sampled_functions =
-      symbol_map->GetSampledSymbolStartAddressSizeMap(sampled_addrs);
-  *addr2line =
-      Addr2line::CreateWithSampledFunctions(binary_, &sampled_functions);
+  *addr2line =  Addr2line::CreateWithSampledFunctions();
 
   if (*addr2line == nullptr) {
     llvm::errs() << "Error reading binary " << binary_;

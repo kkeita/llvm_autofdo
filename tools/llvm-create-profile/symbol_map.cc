@@ -313,7 +313,7 @@ void SymbolMap::BuildSymbolMap() {
                 }
                 std::pair<AddressSymbolMap::iterator, bool> ret =
                         address_symbol_map_.insert(
-                                std::make_pair(symb.getAddress().get(), std::make_pair(string(symb.getName().get()),
+                                std::make_pair(symb.getValue(), std::make_pair(string(symb.getName().get()),
                                                                                        symb.getSize())));
                 if (!ret.second) {
                     (name_alias_map_)[ret.first->second.first].insert(symb.getName().get());
@@ -332,39 +332,7 @@ void SymbolMap::BuildSymbolMap() {
     //elf_reader.VisitSymbols(&symbol_reader);
 }
 
-void SymbolMap::UpdateSymbolMap(
-    const Addr2line *addr2line,
-    const std::map<uint64_t, uint64_t> &sampled_functions) {
-  for (const auto &addr_size : sampled_functions) {
-    string name = address_symbol_map_.find(addr_size.first)->second.first;
-    SourceStack stack;
-    addr2line->GetInlineStack(addr_size.first, &stack);
-    /*
-      LLVMAddr2line addr2(this->binary_, nullptr);
-      addr2.GetInlineStack(addr_size.first, &stack2);
-      std::cout << "new stack : " << std::endl ;
-      for (int i =0; i < stack.size() ; i++) {
-          std::cout << "Element : " << i << std::endl ;
-          std::cout << "Address : " << std::hex << stack2[i].addr << std::endl ;
-       std::cout << stack[i].func_name << " : " << stack2[i].func_name << std::endl;
-       std::cout << stack[i].line << " : " << stack2[i].line << std::endl;
-       std::cout << stack[i].start_line << " : " << stack2[i].start_line << std::endl;
-       std::cout << stack[i].file_name << " : " << stack2[i].file_name << std::endl;
-       std::cout << stack[i].discriminator << " : " << stack2[i].discriminator << std::endl;
-       std::cout << stack[i].func_name << " : " << stack2[i].func_name << std::endl;
-   }
-     */
-      if (!stack.empty()) {
-      // Map from symbol name to "Symbol *".
-      auto ret = map_.insert(std::make_pair(
-          address_symbol_map_.find(addr_size.first)->second.first, nullptr));
-      if (ret.second) {
-        ret.first->second = new Symbol();
-      }
-      ret.first->second->info = stack[stack.size() - 1];
-    }
-  }
-}
+
 
 string Symbol::ModuleName() const {
   // This is a special case in Google3, though tcmalloc.cc has a suffix of .cc,
@@ -643,79 +611,9 @@ void SymbolMap::DumpFuncLevelProfileCompare(const SymbolMap &map) const {
   }
 }
 
-typedef std::map<uint64_t, uint64_t> Histogram;
 
-std::map<uint64_t, uint64_t> SymbolMap::GetSampledSymbolStartAddressSizeMap(
-    const std::set<uint64_t> &sampled_addrs) const {
-  // We depend on the fact that sampled_addrs is an ordered set.
-  std::map<uint64_t, uint64_t> ret;
-  uint64_t next_start_addr = 0;
-  for (const auto &addr : sampled_addrs) {
-    uint64_t adjusted_addr = addr + base_addr_;
-    if (adjusted_addr < next_start_addr) {
-      continue;
-    }
 
-    AddressSymbolMap::const_iterator iter =
-        address_symbol_map_.upper_bound(adjusted_addr);
-    if (iter == address_symbol_map_.begin()) {
-      continue;
-    }
-    iter--;
-    ret.insert(std::make_pair(iter->first, iter->second.second));
-    next_start_addr = iter->first + iter->second.second;
-  }
-  for (const auto &addr_symbol : address_symbol_map_) {
-    if (ret.find(addr_symbol.first) != ret.end()) {
-      continue;
-    }
-    const auto &iter = map_.find(addr_symbol.second.first);
-    if (iter != map_.end() && iter->second != NULL
-        && iter->second->total_count > 0) {
-      ret[addr_symbol.first] = addr_symbol.second.second;
-    }
-  }
-  return ret;
-}
 
-// SymbolMap has already be read from old profile. This function traverses
-// symbol map to calculated the functions that have samples.
-std::map<uint64_t, uint64_t> SymbolMap::GetLegacySymbolStartAddressSizeMap() const {
-  std::set<string> names;
-  // Traverse all symbols in symbol map including all inlined symbols. If the
-  // symbol's total count is non-zero, it has samples and should be included
-  // in the return value.
-  for (const auto &name_symbol : map_) {
-    const Symbol *s = name_symbol.second;
-    if (s->total_count == 0) {
-      continue;
-    }
-    std::vector<const Symbol *> queue;
-    queue.push_back(s);
-    while (!queue.empty()) {
-      const Symbol *s = queue.back();
-      queue.pop_back();
-      if (s->total_count == 0) {
-        continue;
-      }
-      names.insert(s->info.func_name);
-      for (const auto &pos_symbol : s->callsites) {
-        queue.push_back(pos_symbol.second);
-      }
-    }
-  }
-  std::map<uint64_t, uint64_t> ret;
-  for (const string &name : names) {
-    const auto &iter = name_addr_map_.find(name);
-    if (iter == name_addr_map_.end()) {
-      continue;
-    }
-    const auto &a_s_iter = address_symbol_map_.find(iter->second);
-    assert(a_s_iter != address_symbol_map_.end());
-    ret[a_s_iter->first] = a_s_iter->second.second;
-  }
-  return ret;
-}
 
 void SymbolMap::AddAlias(const string& sym, const string& alias) {
   name_alias_map_[sym].insert(alias);

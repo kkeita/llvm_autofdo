@@ -31,11 +31,11 @@ InstructionMap::~InstructionMap() {
 }
 
 void InstructionMap::BuildPerFunctionInstructionMap(
-    const string &name, uint64_t start_addr, uint64_t end_addr) {
+    const string &name, InstructionLocation start_addr, InstructionLocation end_addr) {
   if (start_addr >= end_addr) {
     return;
   }
-  for (uint64_t addr = start_addr; addr < end_addr; addr++) {
+  for (InstructionLocation addr = start_addr; addr < end_addr; ++addr) {
     InstInfo *info = new InstInfo();
     addr2line_->GetInlineStack(addr, &info->source_stack);
     inst_map_.insert(InstMap::value_type(addr, info));

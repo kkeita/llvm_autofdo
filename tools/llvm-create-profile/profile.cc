@@ -32,47 +32,52 @@ llvm::cl::opt<bool> UseLbr("use-lbr",llvm::cl::desc("Whether to use lbr profile.
 
 namespace autofdo {
     using namespace std;
-Profile::ProfileMaps *Profile::GetProfileMaps(uint64_t addr) {
-  const string *name;
+Profile::ProfileMaps *Profile::GetProfileMaps(InstructionLocation addr) {
+  const string *name ;
   uint64_t start_addr, end_addr;
-  if (symbol_map_->GetSymbolInfoByAddr(addr, &name,
+  if (symbol_map_->GetSymbolInfoByAddr(addr.offset, &name,
                                        &start_addr, &end_addr)) {
-    std::pair<SymbolProfileMaps::iterator, bool> ret =
+      std::cout << std::hex << addr << ", resolves to function " << *name << ", starts " << start_addr << ", ends " << end_addr << std::dec << std::endl;
+      std::pair<SymbolProfileMaps::iterator, bool> ret =
         symbol_profile_maps_.insert(SymbolProfileMaps::value_type(*name, NULL));
     if (ret.second) {
-      ret.first->second = new ProfileMaps(start_addr, end_addr);
+      ret.first->second = new ProfileMaps(InstructionLocation{addr.objectFile, start_addr }
+                                         ,InstructionLocation{addr.objectFile, end_addr});
     }
     return ret.first->second;
   } else {
-    return NULL;
+      std::cout << std::hex << addr << " unresolved " << std::dec << std::endl;
+
+      return NULL;
   }
 }
 
 void Profile::AggregatePerFunctionProfile() {
+
+    std::cout << __FUNCTION__ << std::endl;
+    symbol_map_->dumpaddressmap();
+
+
   uint64_t start = symbol_map_->base_addr();
   const AddressCountMap *count_map = &sample_reader_->address_count_map();
   for (const auto &addr_count : *count_map) {
-    ProfileMaps *maps = GetProfileMaps(addr_count.first + start);
+    ProfileMaps *maps = GetProfileMaps(addr_count.first);
     if (maps != NULL) {
-      maps->address_count_map[addr_count.first + start] += addr_count.second;
+      maps->address_count_map[addr_count.first] += addr_count.second;
     }
   }
   const RangeCountMap *range_map = &sample_reader_->range_count_map();
   for (const auto &range_count : *range_map) {
-    ProfileMaps *maps = GetProfileMaps(range_count.first.first + start);
+    ProfileMaps *maps = GetProfileMaps(range_count.first.begin);
     if (maps != NULL) {
-      maps->range_count_map[std::make_pair(range_count.first.first + start,
-                                           range_count.first.second + start)] +=
-          range_count.second;
+      maps->range_count_map[range_count.first] += range_count.second;
     }
   }
   const BranchCountMap *branch_map = &sample_reader_->branch_count_map();
   for (const auto &branch_count : *branch_map) {
-    ProfileMaps *maps = GetProfileMaps(branch_count.first.first + start);
+    ProfileMaps *maps = GetProfileMaps(branch_count.first.target);
     if (maps != NULL) {
-      maps->branch_count_map[std::make_pair(
-          branch_count.first.first + start,
-          branch_count.first.second + start)] += branch_count.second;
+      maps->branch_count_map[branch_count.first] += branch_count.second;
     }
   }
 }
@@ -82,8 +87,7 @@ uint64_t Profile::ProfileMaps::GetAggregatedCount() const {
 
   if (range_count_map.size() > 0) {
     for (const auto &range_count : range_count_map) {
-      ret += range_count.second * (range_count.first.second -
-                                   range_count.first.first);
+      ret += range_count.second * (range_count.first.end - range_count.first.begin);
     }
   } else {
     for (const auto &addr_count : address_count_map) {
@@ -96,8 +100,7 @@ uint64_t Profile::ProfileMaps::GetAggregatedCount() const {
 void Profile::ProcessPerFunctionProfile(string func_name,
                                         const ProfileMaps &maps) {
   InstructionMap inst_map(addr2line_, symbol_map_);
-  inst_map.BuildPerFunctionInstructionMap(func_name, maps.start_addr,
-                                          maps.end_addr);
+  inst_map.BuildPerFunctionInstructionMap(func_name, maps.start_addr, maps.end_addr);
 
   AddressCountMap map;
   const AddressCountMap *map_ptr;
@@ -106,10 +109,8 @@ void Profile::ProcessPerFunctionProfile(string func_name,
       return;
     }
     for (const auto &range_count : maps.range_count_map) {
-      for (InstructionMap::InstMap::const_iterator iter =
-               inst_map.inst_map().find(range_count.first.first);
-           iter != inst_map.inst_map().end()
-               && iter->first <= range_count.first.second;
+      for (InstructionMap::InstMap::const_iterator iter = inst_map.inst_map().find(range_count.first.begin);
+           iter != inst_map.inst_map().end() && iter->first <= range_count.first.end;
            ++iter) {
         map[iter->first] += range_count.second;
       }
@@ -139,7 +140,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
 
   for (const auto &branch_count : maps.branch_count_map) {
     InstructionMap::InstMap::const_iterator iter =
-        inst_map.inst_map().find(branch_count.first.first);
+        inst_map.inst_map().find(branch_count.first.instruction);
     if (iter == inst_map.inst_map().end()) {
       continue;
     }
@@ -148,7 +149,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
       continue;
     }
     const string *callee = symbol_map_->GetSymbolNameByStartAddr(
-        branch_count.first.second);
+        branch_count.first.target.offset);
     if (!callee) {
       continue;
     }

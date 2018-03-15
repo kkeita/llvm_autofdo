@@ -38,7 +38,7 @@ class Profile {
   //   addr2line: an Addr2line.
   //   symbol_map: the symbol map is written by this class to store all symbol
   //               information.
-  Profile(const SampleReader *sample_reader,
+  Profile(const AbstractSampleReader *sample_reader,
           const string &binary_name,
           Addr2line *addr2line,
           SymbolMap *symbol_map)
@@ -53,10 +53,10 @@ class Profile {
  private:
   // Internal data structure that aggregates profile for each symbol.
   struct ProfileMaps {
-    ProfileMaps(uint64_t start, uint64_t end) : start_addr(start), end_addr(end) {}
+    ProfileMaps(InstructionLocation start, InstructionLocation end) : start_addr(start), end_addr(end) {}
     uint64_t GetAggregatedCount() const;
-    uint64_t start_addr;
-    uint64_t end_addr;
+    InstructionLocation start_addr;
+    InstructionLocation end_addr;
     AddressCountMap address_count_map;
     RangeCountMap range_count_map;
     BranchCountMap branch_count_map;
@@ -64,7 +64,7 @@ class Profile {
   typedef map<string, ProfileMaps*> SymbolProfileMaps;
 
   // Returns the profile maps for a give function.
-  ProfileMaps *GetProfileMaps(uint64_t addr);
+  ProfileMaps *GetProfileMaps(InstructionLocation addr);
 
   // Aggregates raw profile for each symbol.
   void AggregatePerFunctionProfile();
@@ -74,7 +74,7 @@ class Profile {
   //   2. Unwinds the inline stack to add symbol count to each inlined symbol.
   void ProcessPerFunctionProfile(string func_name, const ProfileMaps &map);
 
-  const SampleReader *sample_reader_;
+  const AbstractSampleReader *sample_reader_;
   const string binary_name_;
   Addr2line *addr2line_;
   SymbolMap *symbol_map_;
