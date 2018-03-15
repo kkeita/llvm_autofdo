@@ -31,11 +31,11 @@ bool MatchBinary(const string &name, const string &full_name) {
 }  // namespace
 
 namespace autofdo {
-set<uint64_t> SampleReader::GetSampledAddresses() const {
-  set<uint64_t> addrs;
+std::set<InstructionLocation> TextSampleReaderWriter::GetSampledAddresses() const {
+  set<InstructionLocation> addrs;
   if (range_count_map_.size() > 0) {
     for (const auto &range_count : range_count_map_) {
-      addrs.insert(range_count.first.first);
+      addrs.insert(range_count.first.begin);
     }
   } else {
     for (const auto &addr_count : address_count_map_) {
@@ -45,15 +45,8 @@ set<uint64_t> SampleReader::GetSampledAddresses() const {
   return addrs;
 }
 
-uint64_t SampleReader::GetSampleCountOrZero(uint64_t addr) const {
-  AddressCountMap::const_iterator iter = address_count_map_.find(addr);
-  if (iter == address_count_map_.end())
-    return 0;
-  else
-    return iter->second;
-}
 
-uint64_t SampleReader::GetTotalSampleCount() const {
+uint64_t TextSampleReaderWriter::GetTotalSampleCount() const {
   uint64_t ret = 0;
 
   if (range_count_map_.size() > 0) {
@@ -68,99 +61,86 @@ uint64_t SampleReader::GetTotalSampleCount() const {
   return ret;
 }
 
-bool SampleReader::ReadAndSetTotalCount() {
-  if (!Read()) {
-    return false;
-  }
-  if (range_count_map_.size() > 0) {
-    for (const auto &range_count : range_count_map_) {
-      total_count_ += range_count.second * (range_count.first.second -
-                                            range_count.first.first);
-    }
-  } else {
-    for (const auto &addr_count : address_count_map_) {
-      total_count_ += addr_count.second;
-    }
-  }
-  return true;
-}
 
-bool FileSampleReader::Read() {
-  return Append(profile_file_);
-}
-
-bool TextSampleReaderWriter::Append(const string &profile_file) {
-  FILE *fp = fopen(profile_file.c_str(), "r");
+bool TextSampleReaderWriter::readProfile() {
+  FILE *fp = fopen(profileFile.c_str(), "r");
   if (fp == NULL) {
-    llvm::errs() << "Cannot open " << profile_file << "to read";
+    llvm::errs() << "Cannot open " << profileFile << "to read";
     return false;
   }
   uint64_t num_records;
 
   // Reads in the range_count_map
   if (1 != fscanf(fp, "%llu\n", &num_records)) {
-    llvm::errs() << "Error reading from " << profile_file;
+    llvm::errs() << "Error reading from " << profileFile;
     fclose(fp);
     return false;
   }
   for (int i = 0; i < num_records; i++) {
     uint64_t from, to, count;
     if (3 != fscanf(fp, "%llx-%llx:%llu\n", &from, &to, &count)) {
-      llvm::errs() << "Error reading from " << profile_file;
+      llvm::errs() << "Error reading from " << profileFile;
       fclose(fp);
       return false;
     }
-    range_count_map_[Range(from, to)] += count;
+
+    InstructionLocation{objectFile,from};
+    range_count_map_[Range{InstructionLocation{objectFile,from},
+                           InstructionLocation{objectFile,to}}] += count;
   }
 
   // Reads in the addr_count_map
   if (1 != fscanf(fp, "%llu\n", &num_records)) {
-    llvm::errs() << "Error reading from " << profile_file;
+    llvm::errs() << "Error reading from " << profileFile;
     fclose(fp);
     return false;
   }
   for (int i = 0; i < num_records; i++) {
     uint64_t addr, count;
     if (2 != fscanf(fp, "%llx:%llu\n", &addr, &count)) {
-      llvm::errs() << "Error reading from " << profile_file;
+      llvm::errs() << "Error reading from " << profileFile;
       fclose(fp);
       return false;
     }
-    address_count_map_[addr] += count;
+    address_count_map_[InstructionLocation{objectFile,addr}] += count;
   }
 
   // Reads in the branch_count_map
   if (1 != fscanf(fp, "%llu\n", &num_records)) {
-    llvm::errs() << "Error reading from " << profile_file;
+    llvm::errs() << "Error reading from " << profileFile;
     fclose(fp);
     return false;
   }
   for (int i = 0; i < num_records; i++) {
     uint64_t from, to, count;
     if (3 != fscanf(fp, "%llx->%llx:%llu\n", &from, &to, &count)) {
-      llvm::errs() << "Error reading from " << profile_file;
+      llvm::errs() << "Error reading from " << profileFile;
       fclose(fp);
       return false;
     }
-    branch_count_map_[Branch(from, to)] += count;
+    branch_count_map_[Branch{InstructionLocation{objectFile,from},
+                             InstructionLocation{objectFile,to}}] += count;
   }
   fclose(fp);
+
+
+  if (range_count_map_.size() > 0) {
+    for (const auto &range_count : range_count_map_) {
+      total_count_ += range_count.second * (range_count.first.begin.offset -
+                                            range_count.first.end.offset);
+    }
+  } else {
+    for (const auto &addr_count : address_count_map_) {
+      total_count_ += addr_count.second;
+    }
+  }
+
   return true;
 }
 
-void TextSampleReaderWriter::Merge(const SampleReader &reader) {
-  for (const auto &range_count : reader.range_count_map()) {
-    range_count_map_[range_count.first] += range_count.second;
-  }
-  for (const auto &addr_count : reader.address_count_map()) {
-    address_count_map_[addr_count.first] += addr_count.second;
-  }
-  for (const auto &branch_count : reader.branch_count_map()) {
-    branch_count_map_[branch_count.first] += branch_count.second;
-  }
-}
-
 bool TextSampleReaderWriter::Write(const char *aux_info) {
+  return false ;
+  /*
   FILE *fp = fopen(profile_file_.c_str(), "w");
   if (fp == NULL) {
     llvm::errs() << "Cannot open " << profile_file_ << " to write";
@@ -186,16 +166,8 @@ bool TextSampleReaderWriter::Write(const char *aux_info) {
   }
   fclose(fp);
   return true;
+   */
 }
 
-bool TextSampleReaderWriter::IsFileExist() const {
-  FILE *fp = fopen(profile_file_.c_str(), "r");
-  if (fp == NULL) {
-    return false;
-  } else {
-    fclose(fp);
-    return true;
-  }
-}
 
 }  // namespace autofdo

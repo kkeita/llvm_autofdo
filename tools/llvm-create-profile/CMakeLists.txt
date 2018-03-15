@@ -9,10 +9,10 @@ set(LLVM_LINK_COMPONENTS
         ProfileData
         Symbolize
         )
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-fno-rtti)
 
-add_llvm_tool(create-llvm-prof
+add_llvm_tool(llvm-create-prof
         addr2line.cc
         instruction_map.cc
         profile_creator.cc

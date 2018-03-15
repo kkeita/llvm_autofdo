@@ -59,7 +59,7 @@ class ProfileCreator {
   uint64_t TotalSamples();
 
   // Returns the SampleReader pointer.
-  const autofdo::SampleReader &sample_reader() {
+  const autofdo::AbstractSampleReader &sample_reader() {
     return *sample_reader_;
   }
 
@@ -69,7 +69,7 @@ class ProfileCreator {
                       autofdo::Addr2line **addr2line);
 
  private:
-  SampleReader *sample_reader_;
+  AbstractSampleReader *sample_reader_;
   string binary_;
   bool use_discriminator_encoding_;
 };

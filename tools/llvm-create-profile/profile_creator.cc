@@ -68,7 +68,7 @@ bool ProfileCreator::ReadSample(const string &input_profile_name,
 
 bool ProfileCreator::ComputeProfile(SymbolMap *symbol_map,
                                     Addr2line **addr2line) {
-  std::set<uint64_t> sampled_addrs = sample_reader_->GetSampledAddresses();
+  std::set<InstructionLocation> sampled_addrs = sample_reader_->GetSampledAddresses();
   std::map<uint64_t, uint64_t> sampled_functions =
       symbol_map->GetSampledSymbolStartAddressSizeMap(sampled_addrs);
   *addr2line =
@@ -111,25 +111,4 @@ uint64_t ProfileCreator::TotalSamples() {
   }
 }
 
-bool MergeSample(const string &input_file, const string &input_profiler,
-                 const string &binary, const string &output_file) {
-  TextSampleReaderWriter writer(output_file);
-  if (writer.IsFileExist()) {
-    if (!writer.ReadAndSetTotalCount()) {
-      return false;
-    }
-  }
-
-  ProfileCreator creator(binary);
-  if (creator.ReadSample(input_file, input_profiler)) {
-    writer.Merge(creator.sample_reader());
-    if (writer.Write(nullptr)) {
-      return true;
-    } else {
-      return false;
-    }
-  } else {
-    return false;
-  }
-}
 }  // namespace autofdo
