@@ -1,0 +1,108 @@
+knuth_morris_pratt_multibyte:121169:0
+ 0: 4324
+read_file_system_list:69340:0
+ 0: 501
+locale_charset:64636:0
+ 0: 267
+calculate_derived_rates:52914:0
+ 0: 256
+argmatch:19560:0
+ 0: 154
+mbslen:12794:0
+ 0: 78
+mbsstr:12120:0
+ 0: 80
+matches_start_point:11925:0
+ 0: 230
+parse_size:11857:0
+ 0: 302
+mbsnwidth:8940:0
+ 0: 76
+get_new_pred:5633:0
+ 0: 75
+parse_user:5458:0
+ 0: 80
+close_stream:4962:0
+ 0: 63
+build_expression_tree:4909:0
+ 0: 121
+report_file_err:4015:0
+ 0: 172
+cycle_check:3989:0
+ 0: 78
+is_basic:3822:0
+ 0: 168
+print_predicate:3693:0
+ 0: 143
+argmatch_invalid:3395:0
+ 0: 81
+fts_open:2387:0
+ 0: 67
+i_ring_push:2329:0
+ 0: 51
+i_ring_pop:1387:0
+ 0: 78
+fts_read:1370:0
+ 0: 138
+openat_proc_name:1260:0
+ 0: 71
+openat_safer:1189:0
+ 0: 23
+get_expr:717:0
+ 0: 344
+__libc_csu_init:599:0
+ 0: 66
+format_date:592:0
+ 0: 74
+get_new_pred_noarg:565:0
+ 0: 113
+months:505:0
+ 0: 505
+freea:495:0
+ 0: 33
+impl_pred_exec:490:0
+ 0: 490
+mb_copy:449:0
+ 0: 28
+gettime:323:0
+ 0: 74
+worst_cost:287:0
+ 0: 287
+i_ring_empty:260:0
+ 0: 52
+lsetfileconat:240:0
+ 0: 15
+get_new_pred_chk_op:148:0
+ 0: 12
+subtree_has_side_effects:132:0
+ 0: 132
+fts_stat:116:0
+ 0: 2
+atexit:101:0
+ 0: 5
+print_tree:88:0
+ 0: 11
+argmatch_to_argument:44:0
+ 0: 4
+fts_safe_changedir:38:0
+ 0: 2
+getuser:28:0
+ 0: 1
+LCO_hash:24:0
+ 0: 2
+cwd_advance_fd:22:0
+ 0: 2
+fts_sort:12:0
+ 0: 2
+parse_table:10:0
+ 0: 1
+i_ring_init:10:0
+ 0: 1
+fts_compare_ino:3:0
+ 0: 1
+rpl_fcntl:2:0
+ 0: 2
+get_eval_tree:0:0
+ 0: 0
+LCO_compare:0:0
+ 0: 0

@@ -254,6 +254,10 @@ void SymbolMap::BuildSymbolMap() {
     //llvm::object::ELFObjectFileBase * elffile;
     if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
         llvm::object::ELF64LEObjectFile & elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
+        elffile->
+        for (auto & section : elffile.sections()){
+            section.
+        }
         if(elffile.getELFFile()->getHeader()->e_type != llvm::ELF::ET_EXEC) {
             llvm::errs() << "Couldnt open " << binary_ << "excutable only ";
         } else {
@@ -278,17 +282,29 @@ void SymbolMap::BuildSymbolMap() {
             for (auto & symb : elffile.symbols()) {
                 auto name = symb.getName() ;
                 auto address = symb.getAddress() ;
-                if (!name or ! address) {
+                auto section = symb.getSection();
+                if (!name or ! address or !section) {
                   std::cerr << "Can't get symbol infos" << std::endl ;
                   exit(-1);
                 }
                 if (symb.getSize() == 0) {
                     continue ;
                 }
-                
+                if (!section){
+                    std::cerr << "cant get sections" << std::endl ;
+                }
+
+                auto sectionAddress = section.get()->getAddress() ;
+                if (!sectionAddress){
+                    std::cerr << "cant get sections address" << std::endl ;
+                }
+
+                std::cout << std::hex << "Adding symbol " << name.get().str() << ", at address "
+                          <<  address.get() << ", in section starting at : " << sectionAddress << std::dec << std::endl;
+
                 std::pair<AddressSymbolMap::iterator, bool> ret =
                         address_symbol_map_.insert(
-                                std::make_pair(address.get(), std::make_pair(string(name.get()),
+                                std::make_pair(address.get() - sectionAddress + section.get()->, std::make_pair(string(name.get()),
                                                                                        symb.getSize())));
                 if (!ret.second) {
                     (name_alias_map_)[ret.first->second.first].insert(name.get());
@@ -313,7 +329,7 @@ void SymbolMap::BuildSymbolMap() {
                 }
                 std::pair<AddressSymbolMap::iterator, bool> ret =
                         address_symbol_map_.insert(
-                                std::make_pair(symb.getValue(), std::make_pair(string(symb.getName().get()),
+                                std::make_pair(symb.getAddress().get()  , std::make_pair(string(symb.getName().get()),
                                                                                        symb.getSize())));
                 if (!ret.second) {
                     (name_alias_map_)[ret.first->second.first].insert(symb.getName().get());
