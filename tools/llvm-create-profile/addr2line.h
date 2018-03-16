@@ -65,10 +65,10 @@ namespace autofdo {
         explicit LLVMAddr2line() :
                 Addr2line(),
                 symbolizerOption(
-                        /*FunctionNameKind PrintFunctions =*/ llvm::symbolize::FunctionNameKind::LinkageName,
-                        /*bool UseSymbolTable =*/ false,
+                        /* FunctionNameKind PrintFunctions =*/ llvm::symbolize::FunctionNameKind::LinkageName,
+                        /* bool UseSymbolTable =*/ false,
                         /* bool Demangle = */false,
-                        /*bool RelativeAddresses =*/ false,
+                        /* bool RelativeAddresses =*/ false,
                         /* std::string DefaultArch =*/ ""),
                 symbolizer(symbolizerOption) {
 
@@ -79,7 +79,7 @@ namespace autofdo {
         uint64_t getVaddressFromFileOffset(const InstructionLocation & loc){
             auto expected_file = llvm::object::createBinary(loc.objectFile);
             if (!expected_file) {
-                llvm::errs() << "Couldnt open " << loc.objectFile;
+                llvm::errs() << "Couldn't open " << loc.objectFile;
             }
             llvm::object::Binary  * bb =  expected_file.get().getBinary();
             //llvm::object::ELFObjectFileBase * elffile;
@@ -112,7 +112,6 @@ namespace autofdo {
                     mystack[i].start_line = ss.getFrame(i).StartLine;
                     mystack[i].func_name = ss.getFrame(i).FunctionName.c_str();
                     mystack[i].line = ss.getFrame(i).Line;
-
                 }
 
                 std::cout << "Inline stack for  : " << std::hex << loc << std::dec << std::endl;

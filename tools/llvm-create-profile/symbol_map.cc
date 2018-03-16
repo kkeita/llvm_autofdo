@@ -235,12 +235,37 @@ const bool SymbolMap::GetSymbolInfoByAddr(
     return false;
   }
 }
+    static uint64_t getVaddressFromFileOffset(const InstructionLocation & loc){
+        auto expected_file = llvm::object::createBinary(loc.objectFile);
+        if (!expected_file) {
+            llvm::errs() << "Couldnt open " << loc.objectFile;
+        }
+        llvm::object::Binary  * bb =  expected_file.get().getBinary();
+        //llvm::object::ELFObjectFileBase * elffile;
+        if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
+            llvm::object::ELF64LEObjectFile &elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
+            //find the section the address belongs to;
+            auto sections  = elffile.getELFFile()->program_headers();
+            if(!sections)
+                return 0;
+            for (auto & section : sections.get()){
+                if ( ( section.p_offset <= loc.offset) and ( loc.offset < section.p_offset + section.p_filesz)) {
+                    return section.p_vaddr + loc.offset ;
+                }
+            }
+        }
+        return 0;
 
-const string *SymbolMap::GetSymbolNameByStartAddr(uint64_t addr) const {
-  AddressSymbolMap::const_iterator ret = address_symbol_map_.find(addr);
+    }
+
+const string *SymbolMap::GetSymbolNameByStartAddr(const InstructionLocation&  loc) const {
+    std::cout << "Target lookup : " << std::hex << loc << std::dec << std::endl ;
+    AddressSymbolMap::const_iterator ret = address_symbol_map_.find(getVaddressFromFileOffset(loc));
   if (ret == address_symbol_map_.end()) {
+      std::cout << "target function not found" << std::endl;
     return NULL;
   }
+    std::cout << "target function found : " << ret->second.first << std::endl ;
   return &ret->second.first;
 }
 

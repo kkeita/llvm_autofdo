@@ -139,24 +139,28 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   }
 
   for (const auto &branch_count : maps.branch_count_map) {
-    InstructionMap::InstMap::const_iterator iter =
+    std::cout << "Processing : " << std::hex << branch_count.first << std::dec << std::endl ;
+      InstructionMap::InstMap::const_iterator iter =
         inst_map.inst_map().find(branch_count.first.instruction);
     if (iter == inst_map.inst_map().end()) {
+        std::cout << "Missing Instruction in branch " << std::endl ;
       continue;
     }
     const InstructionMap::InstInfo *info = iter->second;
     if (info == NULL) {
+      std::cout << "NoFound branch target" << branch_count.first <<std::endl ;
       continue;
     }
-    const string *callee = symbol_map_->GetSymbolNameByStartAddr(
-        branch_count.first.target.offset);
+
+    std::cout << "Found branch target" << branch_count.first <<std::endl ;
+
+    const string *callee = symbol_map_->GetSymbolNameByStartAddr(branch_count.first.target);
     if (!callee) {
       continue;
     }
     if (symbol_map_->map().count(*callee)) {
       symbol_map_->AddSymbolEntryCount(*callee, branch_count.second);
-      symbol_map_->AddIndirectCallTarget(func_name, info->source_stack,
-                                         *callee, branch_count.second);
+      symbol_map_->AddIndirectCallTarget(func_name, info->source_stack, *callee, branch_count.second);
     }
   }
 

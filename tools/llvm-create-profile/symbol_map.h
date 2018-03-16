@@ -309,7 +309,7 @@ class SymbolMap {
 
   // Returns a pointer to the symbol name for a given start address. Returns
   // NULL if no such symbol exists.
-  const string *GetSymbolNameByStartAddr(uint64_t address) const;
+  const string *GetSymbolNameByStartAddr(const InstructionLocation& address) const;
 
   // Returns the overlap between two symbol maps. For two profiles, if
   // count_i_j denotes the function count of the ith function in profile j;
