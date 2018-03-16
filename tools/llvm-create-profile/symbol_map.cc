@@ -254,10 +254,6 @@ void SymbolMap::BuildSymbolMap() {
     //llvm::object::ELFObjectFileBase * elffile;
     if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
         llvm::object::ELF64LEObjectFile & elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
-        elffile->
-        for (auto & section : elffile.sections()){
-            section.
-        }
         if(elffile.getELFFile()->getHeader()->e_type != llvm::ELF::ET_EXEC) {
             llvm::errs() << "Couldnt open " << binary_ << "excutable only ";
         } else {
@@ -293,18 +289,24 @@ void SymbolMap::BuildSymbolMap() {
                 if (!section){
                     std::cerr << "cant get sections" << std::endl ;
                 }
-
                 auto sectionAddress = section.get()->getAddress() ;
+
                 if (!sectionAddress){
                     std::cerr << "cant get sections address" << std::endl ;
                 }
+                auto symbolOffset = address.get() - sectionAddress +
+                                    elffile.getSection(section.get()->getRawDataRefImpl())->sh_offset ;
+                std::cout << std::hex << "Adding symbol " << name.get().str()
+                          << ", at address " <<  address.get()
+                          << ", in section starting at : " << sectionAddress
+                          << ", section offset : "<< elffile.getSection(section.get()->getRawDataRefImpl())->sh_offset
+                          << ", symbol offset : "<< symbolOffset << std::dec << std::endl;
 
-                std::cout << std::hex << "Adding symbol " << name.get().str() << ", at address "
-                          <<  address.get() << ", in section starting at : " << sectionAddress << std::dec << std::endl;
+
 
                 std::pair<AddressSymbolMap::iterator, bool> ret =
                         address_symbol_map_.insert(
-                                std::make_pair(address.get() - sectionAddress + section.get()->, std::make_pair(string(name.get()),
+                                std::make_pair(symbolOffset, std::make_pair(string(name.get()),
                                                                                        symb.getSize())));
                 if (!ret.second) {
                     (name_alias_map_)[ret.first->second.first].insert(name.get());

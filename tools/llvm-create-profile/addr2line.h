@@ -24,6 +24,8 @@
 #include "llvm/DebugInfo/Symbolize/Symbolize.h"
 #include "llvm/Support/Path.h"
 #include "PerfSampleReader.h"
+#include "llvm/Object/Binary.h"
+#include "llvm/Object/ELFObjectFile.h"
 namespace autofdo {
     using namespace std ;
     using experimental::InstructionLocation;
@@ -66,7 +68,7 @@ namespace autofdo {
                         /*FunctionNameKind PrintFunctions =*/ llvm::symbolize::FunctionNameKind::LinkageName,
                         /*bool UseSymbolTable =*/ false,
                         /* bool Demangle = */false,
-                        /*bool RelativeAddresses =*/ true,
+                        /*bool RelativeAddresses =*/ false,
                         /* std::string DefaultArch =*/ ""),
                 symbolizer(symbolizerOption) {
 
@@ -74,21 +76,48 @@ namespace autofdo {
 
         virtual ~LLVMAddr2line() {};
 
+        uint64_t getVaddressFromFileOffset(const InstructionLocation & loc){
+            auto expected_file = llvm::object::createBinary(loc.objectFile);
+            if (!expected_file) {
+                llvm::errs() << "Couldnt open " << loc.objectFile;
+            }
+            llvm::object::Binary  * bb =  expected_file.get().getBinary();
+            //llvm::object::ELFObjectFileBase * elffile;
+            if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
+                llvm::object::ELF64LEObjectFile &elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
+                //find the section the address belongs to;
+                auto sections  = elffile.getELFFile()->program_headers();
+                if(!sections)
+                    return 0;
+                for (auto & section : sections.get()){
+                    if ( ( section.p_offset <= loc.offset) and ( loc.offset < section.p_offset + section.p_filesz)) {
+                        return section.p_vaddr + loc.offset ;
+                    }
+                }
+            }
+            return 0;
+
+        }
         void GetInlineStack(InstructionLocation loc, SourceStack *stack) override {
-            llvm::Expected<llvm::DIInliningInfo> st = std::move(symbolizer.symbolizeInlinedCode(loc.objectFile, loc.offset));
+            uint64_t vaddr = getVaddressFromFileOffset(loc);
+            llvm::Expected<llvm::DIInliningInfo> st = std::move(symbolizer.symbolizeInlinedCode(loc.objectFile, vaddr));
             if (st) {
                 auto ss = st.get();
                 SourceStack &mystack = *stack; //;(ss.getNumberOfFrames());
                 mystack.resize(ss.getNumberOfFrames());
                 for (int i = 0; i < ss.getNumberOfFrames(); i++) {
-                    mystack[i].file_name =
-                            llvm::sys::path::filename(ss.getFrame(i).FileName.c_str());
+                    mystack[i].file_name = llvm::sys::path::filename(ss.getFrame(i).FileName.c_str());
                     mystack[i].dir_name; //= ss.getFrame(i).FileName.c_str();
                     mystack[i].discriminator = ss.getFrame(i).Discriminator;
                     mystack[i].start_line = ss.getFrame(i).StartLine;
                     mystack[i].func_name = ss.getFrame(i).FunctionName.c_str();
                     mystack[i].line = ss.getFrame(i).Line;
 
+                }
+
+                std::cout << "Inline stack for  : " << std::hex << loc << std::dec << std::endl;
+                for (auto & info : mystack) {
+                    std::cout << info << std::endl;
                 }
             } else {
                 std::cerr << "failled to get stack object for location \n" << std::hex << loc << std::dec;
