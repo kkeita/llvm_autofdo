@@ -96,13 +96,10 @@ fts_build:84942:74
   9: 57 set_cloexec_flag:60
   10: 78
   11: 16
- 236: memmove:0
  260: set_stat_type:2338
   29: 142
  261: fts_set_stat_required:2185
   3: 169
- 302: fts_padjust:0
- 346: dirent_inode_sort_may_be_useful:0
 fts_read:78971:216
  1: 189
  7: 189
@@ -158,9 +155,6 @@ fts_read:78971:216
  266: 54 leave_dir:20
  268: 54
  269: 258
- 142: fts_load:0
-  13: memmove:0
-  16: memmove:0
  168: memmove:6883
   2: 279
  182: link_count_optimize_ok:53
@@ -172,7 +166,6 @@ fts_read:78971:216
   24: 1 hash_lookup:2
   25: 1
   26: 1
-  34: leaf_optimization_applies:0
 find:61897:0
  41: 256 fts_read:216
  43: 256
@@ -181,14 +174,6 @@ find:61897:0
  61: 237
  62: 237
  63: 237
- 54: show_outstanding_execdirs:0
-  7: fprintf:0
-  25: fprintf:0
-  27: fprintf:0
-  28: fprintf:0
-  31: fprintf:0
-  33: fprintf:0
-  38: fprintf:0
  64: consider_visiting:45299
   6: 237
   17: 237
@@ -225,12 +210,8 @@ find:61897:0
   179: 95
   184: 195
   187: 15
-  7: fprintf:0
   19: left_dir:2051
    2: 137 left_dir:144
-  39: issue_loop_warning:0
-   18: partial_quotearg_n:0
-  172: fprintf:0
   181: visit:5076
    4: 72
    5: 72
@@ -304,11 +285,8 @@ fts_stat:12369:139
  34: 53
  39: 53
  46: 52
- 14: stat:0
- 17: lstat:0
  24: fstatat:3264
   3: 136
- 27: memset:0
 inside_dir:11925:252
  1: 230
  2: 230
@@ -383,7 +361,6 @@ hash_find_entry:5291:72
  45: 6
  51: 6
  61: 35
- 26: free_entry:0
  52: free_entry:126
   2: 6
   3: 6
@@ -547,9 +524,6 @@ quotearg_buffer_restyled:287:0
  437: 2
  444: 2
  445: 2
- 101: gettext_quote:0
- 102: gettext_quote:0
- 345: memset:0
 i_ring_empty:260:52
  2: 52
  3: 52
@@ -569,8 +543,6 @@ diropen:44:0
  12: 4
 print_quoted:41:0
  42: 1
- 29: fprintf:0
- 39: fprintf:0
 LCO_hash:12:1
  3: 1
  4: 1

@@ -22,7 +22,7 @@
 #include <string>
 
 #include "sample_reader.h"
-
+#include "instruction_map.h"
 namespace autofdo {
 using namespace std;
 class Addr2line;
@@ -43,7 +43,7 @@ class Profile {
           Addr2line *addr2line,
           SymbolMap *symbol_map)
       : sample_reader_(sample_reader), binary_name_(binary_name),
-        addr2line_(addr2line), symbol_map_(symbol_map) {}
+        addr2line_(addr2line), symbol_map_(symbol_map),inst_map(addr2line, symbol_map) {}
 
   ~Profile();
 
@@ -51,6 +51,7 @@ class Profile {
   void ComputeProfile();
 
  private:
+    InstructionMap inst_map;
   // Internal data structure that aggregates profile for each symbol.
   struct ProfileMaps {
     ProfileMaps(InstructionLocation start, InstructionLocation end) : start_addr(start), end_addr(end) {}

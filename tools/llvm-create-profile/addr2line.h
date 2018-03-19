@@ -42,7 +42,7 @@ namespace autofdo {
 
 
         // Stores the inline stack of ADDR in STACK.
-        virtual void GetInlineStack(InstructionLocation, SourceStack *stack) =0 ;
+        virtual void GetInlineStack(const InstructionLocation &, SourceStack *stack) =0 ;
 
         string binary_name_;
 
@@ -99,7 +99,7 @@ namespace autofdo {
             return 0;
 
         }
-        void GetInlineStack(InstructionLocation loc, SourceStack *stack) override {
+        void GetInlineStack(const InstructionLocation & loc, SourceStack *stack) override {
             uint64_t vaddr = getVaddressFromFileOffset(loc);
             llvm::Expected<llvm::DIInliningInfo> st = std::move(symbolizer.symbolizeInlinedCode(loc.objectFile, vaddr));
             if (st) {

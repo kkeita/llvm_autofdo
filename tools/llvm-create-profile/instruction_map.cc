@@ -38,15 +38,9 @@ void InstructionMap::BuildPerFunctionInstructionMap(
   if (start_addr >= end_addr) {
     return;
   }
-  for (InstructionLocation addr = start_addr; addr <= end_addr; ++addr) {
-    InstInfo *info = new InstInfo();
-    addr2line_->GetInlineStack(addr, &info->source_stack);
-    inst_map_.insert(InstMap::value_type(addr, info));
-    if (info->source_stack.size() > 0) {
-      symbol_map_->AddSourceCount(name, info->source_stack, 0, 1,
-                                  SymbolMap::MAX);
+  for (InstructionLocation addr = start_addr; addr < end_addr; ++addr) {
+        resolveAddress(addr,name);
     }
   }
-}
 
 }  // namespace autofdo

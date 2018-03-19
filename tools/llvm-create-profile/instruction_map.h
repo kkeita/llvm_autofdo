@@ -22,6 +22,7 @@
 #include <utility>
 #include <ostream>
 
+#include "addr2line.h"
 #include "symbol_map.h"
 #include "PerfSampleReader.h"
 
@@ -52,6 +53,8 @@ class InstructionMap {
     return inst_map_.size();
   }
 
+
+
   // Builds instruction map for a function.
   void BuildPerFunctionInstructionMap(const string &name, InstructionLocation start_addr,
                                       InstructionLocation end_addr);
@@ -75,6 +78,20 @@ class InstructionMap {
       SourceStack source_stack;
   };
 
+    InstInfo * resolveAddress(const InstructionLocation & addr,const std::string & name) {
+        if (inst_map_.count(addr) == 0){
+        InstInfo *info = new InstInfo();
+        addr2line_->GetInlineStack(addr, &info->source_stack);
+        inst_map_.insert(InstMap::value_type(addr, info));
+        if (info->source_stack.size() > 0) {
+            symbol_map_->AddSourceCount(name, info->source_stack, 0, 1,
+                                        SymbolMap::MAX);
+        }
+        }
+
+
+        return inst_map_[addr];
+    }
   typedef map<InstructionLocation, InstInfo *> InstMap;
   const InstMap &inst_map() const {
     return inst_map_;

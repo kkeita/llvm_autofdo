@@ -14,8 +14,9 @@ namespace autofdo {
     namespace experimental {
 
         struct InstructionLocation {
-            InstructionLocation operator++(){
+            InstructionLocation & operator++(){
                 offset++;
+                return *this;
             }
             uint64_t operator-(const InstructionLocation &rhs) const {
                 assert(objectFile == rhs.objectFile);

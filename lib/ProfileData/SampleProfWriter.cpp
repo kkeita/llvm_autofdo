@@ -82,8 +82,8 @@ std::error_code SampleProfileWriterText::write(const FunctionSamples &S) {
   for (const auto &I : SortedSamples.get()) {
     LineLocation Loc = I->first;
       const SampleRecord &Sample = I->second;
-      if (Sample.getSamples()  == 0  and Sample.getCallTargets().size() == 0)
-      continue;
+      //if (Sample.getSamples()  == 0  and Sample.getCallTargets().size() == 0)
+      //continue;
 
     OS.indent(Indent + 1);
     if (Loc.Discriminator == 0)

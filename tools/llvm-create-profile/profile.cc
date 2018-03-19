@@ -99,11 +99,10 @@ uint64_t Profile::ProfileMaps::GetAggregatedCount() const {
 
 void Profile::ProcessPerFunctionProfile(string func_name,
                                         const ProfileMaps &maps) {
-  InstructionMap inst_map(addr2line_, symbol_map_);
-  inst_map.BuildPerFunctionInstructionMap(func_name, maps.start_addr, maps.end_addr);
+  //inst_map.BuildPerFunctionInstructionMap(func_name, maps.start_addr, maps.end_addr);
 
-    std::cout << "Map for function : " << func_name;
-  std::cout << inst_map <<std::endl ;
+  //std::cout << "Map for function : " << func_name;
+  //std::cout << inst_map <<std::endl ;
   AddressCountMap map;
   const AddressCountMap *map_ptr;
   if (UseLbr) {
@@ -111,10 +110,10 @@ void Profile::ProcessPerFunctionProfile(string func_name,
       return;
     }
     for (const auto &range_count : maps.range_count_map) {
-      for (InstructionMap::InstMap::const_iterator iter = inst_map.inst_map().find(range_count.first.begin);
-           iter != inst_map.inst_map().end() && iter->first <= range_count.first.end;
-           ++iter) {
-        map[iter->first] += range_count.second;
+        std::cout << range_count.first << std::endl ;
+      for (InstructionLocation loc = range_count.first.begin ; loc <= range_count.first.end;++loc) {
+          std::cout << loc << std::endl ;
+        map[loc] += range_count.second;
       }
     }
     map_ptr = &map;
@@ -123,15 +122,20 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   }
 
   for (const auto &address_count : *map_ptr) {
+      const InstructionMap::InstInfo *info2 = inst_map.resolveAddress(address_count.first,func_name);
     InstructionMap::InstMap::const_iterator iter =
         inst_map.inst_map().find(address_count.first);
     if (iter == inst_map.inst_map().end()) {
-      continue;
+      std::cout << "this should not happen" << std::endl ;
+        continue;
     }
     const InstructionMap::InstInfo *info = iter->second;
     if (info == NULL) {
+        std::cout << "Should never happen" << std::endl ;
       continue;
     }
+    //  assert(false);
+    //  assert(info == info2);
     if (info->source_stack.size() > 0) {
       symbol_map_->AddSourceCount(
           func_name, info->source_stack,
@@ -142,6 +146,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
 
   for (const auto &branch_count : maps.branch_count_map) {
     std::cout << "Processing : " << std::hex << branch_count.first << std::dec << std::endl ;
+      inst_map.resolveAddress(branch_count.first.instruction,func_name);
       InstructionMap::InstMap::const_iterator iter =
         inst_map.inst_map().find(branch_count.first.instruction);
     if (iter == inst_map.inst_map().end()) {
