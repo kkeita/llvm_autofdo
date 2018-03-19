@@ -260,7 +260,7 @@ const bool SymbolMap::GetSymbolInfoByAddr(
 
 const string *SymbolMap::GetSymbolNameByStartAddr(const InstructionLocation&  loc) const {
     std::cout << "Target lookup : " << std::hex << loc << std::dec << std::endl ;
-    AddressSymbolMap::const_iterator ret = address_symbol_map_.find(getVaddressFromFileOffset(loc));
+    AddressSymbolMap::const_iterator ret = address_symbol_map_.find(loc.offset);
   if (ret == address_symbol_map_.end()) {
       std::cout << "target function not found" << std::endl;
     return NULL;

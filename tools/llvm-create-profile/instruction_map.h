@@ -20,6 +20,7 @@
 #include <map>
 #include <string>
 #include <utility>
+#include <ostream>
 
 #include "symbol_map.h"
 #include "PerfSampleReader.h"
@@ -61,14 +62,31 @@ class InstructionMap {
       assert(i >= 0 && source_stack.size() > i);
       return source_stack[i];
     }
-    SourceStack source_stack;
+
+      friend ostream &operator<<(ostream &os, const InstInfo &info) {
+          os << "source_stack: [ " ;
+             for(auto & ss : info.source_stack) {
+                 os << ss << ", ";
+             }
+          os << std::endl;
+          return os;
+      }
+
+      SourceStack source_stack;
   };
 
   typedef map<InstructionLocation, InstInfo *> InstMap;
   const InstMap &inst_map() const {
     return inst_map_;
   }
+    friend std::ostream &operator<<(std::ostream &os, const InstructionMap & instMap ) {
 
+      for(auto & pairs : instMap.inst_map_ ) {
+        std::cout << std::hex << pairs.first << std::dec << std::endl;
+        std::cout << *pairs.second << std::endl ;
+      }
+      return os;
+    }
  private:
   // A map from instruction address to its information.
   InstMap inst_map_;

@@ -88,8 +88,17 @@ namespace autofdo {
 
 
         struct Branch {
+                        friend std::ostream &operator<<(std::ostream &os, const Branch &branch) {
+                os << "instruction: " << branch.instruction << " target: " << branch.target;
+                return os;
+            }
+
             bool operator<(const Branch &rhs) const {
-                return instruction < rhs.instruction;
+                if (instruction < rhs.instruction)
+                    return true;
+                if (rhs.instruction < instruction)
+                    return false;
+                return target < rhs.target;
             }
 
             bool operator>(const Branch &rhs) const {
@@ -102,11 +111,6 @@ namespace autofdo {
 
             bool operator>=(const Branch &rhs) const {
                 return !(*this < rhs);
-            }
-
-            friend std::ostream &operator<<(std::ostream &os, const Branch &branch) {
-                os << "instruction: " << branch.instruction << " target: " << branch.target;
-                return os;
             }
 
             InstructionLocation instruction;

@@ -75,7 +75,7 @@ void Profile::AggregatePerFunctionProfile() {
   }
   const BranchCountMap *branch_map = &sample_reader_->branch_count_map();
   for (const auto &branch_count : *branch_map) {
-    ProfileMaps *maps = GetProfileMaps(branch_count.first.target);
+    ProfileMaps *maps = GetProfileMaps(branch_count.first.instruction);
     if (maps != NULL) {
       maps->branch_count_map[branch_count.first] += branch_count.second;
     }
@@ -102,6 +102,8 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   InstructionMap inst_map(addr2line_, symbol_map_);
   inst_map.BuildPerFunctionInstructionMap(func_name, maps.start_addr, maps.end_addr);
 
+    std::cout << "Map for function : " << func_name;
+  std::cout << inst_map <<std::endl ;
   AddressCountMap map;
   const AddressCountMap *map_ptr;
   if (UseLbr) {
@@ -148,14 +150,15 @@ void Profile::ProcessPerFunctionProfile(string func_name,
     }
     const InstructionMap::InstInfo *info = iter->second;
     if (info == NULL) {
-      std::cout << "NoFound branch target" << branch_count.first <<std::endl ;
+      std::cout << "No Found branch target" << std::hex << branch_count.first << std::dec <<std::endl ;
       continue;
     }
 
-    std::cout << "Found branch target" << branch_count.first <<std::endl ;
+    std::cout << "Found branch target" << std:: hex << branch_count.first << std::dec <<std::endl ;
 
     const string *callee = symbol_map_->GetSymbolNameByStartAddr(branch_count.first.target);
     if (!callee) {
+        std::cout << "No callee found" << std::hex << branch_count.first.target << std::dec <<std::endl ;
       continue;
     }
     if (symbol_map_->map().count(*callee)) {

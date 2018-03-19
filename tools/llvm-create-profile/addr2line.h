@@ -68,13 +68,14 @@ namespace autofdo {
                         /* FunctionNameKind PrintFunctions =*/ llvm::symbolize::FunctionNameKind::LinkageName,
                         /* bool UseSymbolTable =*/ false,
                         /* bool Demangle = */false,
-                        /* bool RelativeAddresses =*/ false,
+                        /* bool RelativeAddresses =*/ true,
                         /* std::string DefaultArch =*/ ""),
                 symbolizer(symbolizerOption) {
 
         };
 
         virtual ~LLVMAddr2line() {};
+
 
         uint64_t getVaddressFromFileOffset(const InstructionLocation & loc){
             auto expected_file = llvm::object::createBinary(loc.objectFile);
