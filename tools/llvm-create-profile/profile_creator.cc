@@ -68,14 +68,7 @@ bool ProfileCreator::ReadSample(const string &input_profile_name,
 
 bool ProfileCreator::ComputeProfile(SymbolMap *symbol_map,
                                     Addr2line **addr2line) {
-  *addr2line =  Addr2line::CreateWithSampledFunctions();
-
-  if (*addr2line == nullptr) {
-    llvm::errs() << "Error reading binary " << binary_;
-    return false;
-  }
-
-  Profile profile(sample_reader_, binary_, *addr2line, symbol_map);
+  Profile profile(sample_reader_, binary_, symbol_map);
   profile.ComputeProfile();
 
   return true;
@@ -88,11 +81,7 @@ bool ProfileCreator::CreateProfileFromSample(ProfileWriter *writer,
   Addr2line *addr2line = nullptr;
   if (!ComputeProfile(&symbol_map, &addr2line)) return false;
 
-  //auto grouper =
-  //    ModuleGrouper::GroupModule(binary_, GCOV_ELF_SECTION_NAME, &symbol_map);
-
   writer->setSymbolMap(&symbol_map);
-  //writer->setModuleMap(&grouper->module_map());
   bool ret = writer->WriteToFile(output_name);
 
   delete addr2line;

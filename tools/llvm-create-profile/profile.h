@@ -23,6 +23,8 @@
 
 #include "sample_reader.h"
 #include "instruction_map.h"
+#include "InstructionSymbolizer.h"
+
 namespace autofdo {
 using namespace std;
 class Addr2line;
@@ -42,8 +44,8 @@ class Profile {
           const string &binary_name,
           Addr2line *addr2line,
           SymbolMap *symbol_map)
-      : sample_reader_(sample_reader), binary_name_(binary_name),
-        addr2line_(addr2line), symbol_map_(symbol_map),inst_map(addr2line, symbol_map) {}
+      : sample_reader_(sample_reader),
+        symbol_map_(symbol_map) {}
 
   ~Profile();
 
@@ -51,7 +53,7 @@ class Profile {
   void ComputeProfile();
 
  private:
-    InstructionMap inst_map;
+    InstructionSymbolizer symbolizer;
   // Internal data structure that aggregates profile for each symbol.
   struct ProfileMaps {
     ProfileMaps(InstructionLocation start, InstructionLocation end) : start_addr(start), end_addr(end) {}
@@ -76,8 +78,6 @@ class Profile {
   void ProcessPerFunctionProfile(string func_name, const ProfileMaps &map);
 
   const AbstractSampleReader *sample_reader_;
-  const string binary_name_;
-  Addr2line *addr2line_;
   SymbolMap *symbol_map_;
   AddressCountMap global_addr_count_map_;
   SymbolProfileMaps symbol_profile_maps_;

@@ -53,7 +53,7 @@ Profile::ProfileMaps *Profile::GetProfileMaps(InstructionLocation addr) {
 }
 
 void Profile::AggregatePerFunctionProfile() {
-    symbol_map_->dumpaddressmap();
+    DEBUG(symbol_map_->dumpaddressmap());
 
 
   uint64_t start = symbol_map_->base_addr();
@@ -120,21 +120,15 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   }
 
   for (const auto &address_count : *map_ptr) {
-      const InstructionMap::InstInfo *info2 = inst_map.resolveAddress(address_count.first,func_name);
-    InstructionMap::InstMap::const_iterator iter =
-        inst_map.inst_map().find(address_count.first);
-    if (iter == inst_map.inst_map().end()) {
-      DEBUG(std::cout << "this should not happen" << std::endl);
-        continue;
-    }
-    const InstructionMap::InstInfo *info = iter->second;
-    if (info == NULL) {
+    auto sourceInfo = symbolizer.symbolizeInstruction(address_count.first);
+
+    if (sourceInfo) {
         DEBUG(std::cout << "Should never happen" << std::endl) ;
       continue;
     }
-    //  assert(false);
-    //  assert(info == info2);
-    if (info->source_stack.size() > 0) {
+
+
+    if (sourceInfo.get().getNumberOfFrames() > 0) {
       symbol_map_->AddSourceCount(
           func_name, info->source_stack,
           address_count.second * info->source_stack[0].DuplicationFactor(), 0,
