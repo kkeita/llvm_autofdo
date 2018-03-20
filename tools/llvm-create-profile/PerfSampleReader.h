@@ -46,7 +46,7 @@ namespace autofdo {
                 return os;
             }
 
-            std::string objectFile;
+            const std::string & objectFile;
             uint64_t offset;
         };
 

@@ -30,17 +30,4 @@ InstructionMap::~InstructionMap() {
   }
 }
 
-void InstructionMap::BuildPerFunctionInstructionMap(
-    const string &name, InstructionLocation start_addr, InstructionLocation end_addr) {
-  std::cout << std::hex << "Building map for : " << name << std::endl ;
-  std::cout << "Start address " << start_addr << std::endl
-            << "End address " << end_addr << std::dec << std::endl ;
-  if (start_addr >= end_addr) {
-    return;
-  }
-  for (InstructionLocation addr = start_addr; addr < end_addr; ++addr) {
-        resolveAddress(addr,name);
-    }
-  }
-
 }  // namespace autofdo

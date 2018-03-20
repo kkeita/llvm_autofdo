@@ -259,13 +259,13 @@ const bool SymbolMap::GetSymbolInfoByAddr(
     }
 
 const string *SymbolMap::GetSymbolNameByStartAddr(const InstructionLocation&  loc) const {
-    std::cout << "Target lookup : " << std::hex << loc << std::dec << std::endl ;
+    DEBUG(std::cout << "Target lookup : " << std::hex << loc << std::dec << std::endl) ;
     AddressSymbolMap::const_iterator ret = address_symbol_map_.find(loc.offset);
   if (ret == address_symbol_map_.end()) {
-      std::cout << "target function not found" << std::endl;
+      DEBUG(std::cout << "target function not found" << std::endl);
     return NULL;
   }
-    std::cout << "target function found : " << ret->second.first << std::endl ;
+    DEBUG(std::cout << "target function found : " << ret->second.first << std::endl) ;
   return &ret->second.first;
 }
 
@@ -284,12 +284,12 @@ void SymbolMap::BuildSymbolMap() {
         } else {
             auto expected = elffile.getELFFile()->program_headers() ;
             if (expected) {
-                std::cerr << "program headers" <<std::endl;
-                std::cerr << "size" << expected.get().size() << std::endl ;
+                DEBUG(std::cerr << "program headers" <<std::endl);
+                DEBUG(std::cerr << "size" << expected.get().size() << std::endl) ;
                 if (expected.get().empty())
                     std::cerr << "is empty" << std::endl ;
             } else {
-                std::cout << "Non elfile" << std::endl ;
+                DEBUG(std::cout << "Non elfile" << std::endl) ;
             }
             for (auto & header : expected.get()) {
                 std::cerr << "size" << expected.get().size() << std::endl ;
@@ -321,11 +321,11 @@ void SymbolMap::BuildSymbolMap() {
                 }
                 auto symbolOffset = address.get() - sectionAddress +
                                     elffile.getSection(section.get()->getRawDataRefImpl())->sh_offset ;
-                std::cout << std::hex << "Adding symbol " << name.get().str()
+                DEBUG(std::cout << std::hex << "Adding symbol " << name.get().str()
                           << ", at address " <<  address.get()
                           << ", in section starting at : " << sectionAddress
                           << ", section offset : "<< elffile.getSection(section.get()->getRawDataRefImpl())->sh_offset
-                          << ", symbol offset : "<< symbolOffset << std::dec << std::endl;
+                          << ", symbol offset : "<< symbolOffset << std::dec << std::endl);
 
 
 
@@ -368,42 +368,9 @@ void SymbolMap::BuildSymbolMap() {
         llvm::errs() << "Couldnt open " << binary_ << "Wrong file format ";
     }
 
-    //ElfReader elf_reader(binary_);
-    //base_addr_ = elf_reader.VaddrOfFirstLoadSegment();
-    //SymbolReader symbol_reader(&name_alias_map_, &address_symbol_map_);
-
-    //elf_reader.VisitSymbols(&symbol_reader);
 }
 
 
-
-string Symbol::ModuleName() const {
-  // This is a special case in Google3, though tcmalloc.cc has a suffix of .cc,
-  // it's actually no a module, but included by tcmalloc_or_debug.cc, which is
-  // a pure wrapper. Thus when a function is found to belong to module
-  // tcmalloc.cc, it should be reattributed to the wrapper module.
-  if (info.RelativePath() == "./tcmalloc/tcmalloc.cc") {
-    return "tcmalloc/tcmalloc_or_debug.cc";
-  } else {
-    return info.RelativePath();
-  }
-}
-
-bool Symbol::IsFromHeader() const {
-  if (HasSuffixString(ModuleName(), ".c") ||
-      HasSuffixString(ModuleName(), ".cc") ||
-      HasSuffixString(ModuleName(), ".C") ||
-      HasSuffixString(ModuleName(), ".cpp")) {
-    return false;
-  } else if (HasSuffixString(ModuleName(), ".h")) {
-    return true;
-  } else {
-    llvm::errs() << ModuleName() << " has unknown suffix.";
-    // If suffix is unknown, we think it is from header so that the module
-    // will not be considered in module grouping.
-    return true;
-  }
-}
 
 void SymbolMap::AddSymbolEntryCount(const string &symbol_name, uint64_t count) {
   Symbol *symbol = map_.find(symbol_name)->second;

@@ -20,7 +20,7 @@
 #include <string>
 #include <utility>
 #include <inttypes.h>
-
+#define DEBUG(x) {}
 namespace {
     using namespace std;
 // Returns true if name equals full_name, or full_name is empty and name
@@ -86,6 +86,7 @@ bool TextSampleReaderWriter::readProfile() {
     }
 
     InstructionLocation{objectFile,from};
+    InstructionLocation{objectFile,from};
     range_count_map_[Range{InstructionLocation{objectFile,from},
                            InstructionLocation{objectFile,to}}] += count;
   }
@@ -136,7 +137,7 @@ bool TextSampleReaderWriter::readProfile() {
     }
   }
 
-    Dump(std::cout);
+    DEBUG(Dump(std::cout));
   return true;
 }
 

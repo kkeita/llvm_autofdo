@@ -26,7 +26,7 @@
 #include "sample_reader.h"
 #include "llvm/Support/CommandLine.h"
 
-
+#define DEBUG_TYPE "test"
 llvm::cl::opt<bool> UseLbr("use-lbr",llvm::cl::desc("Whether to use lbr profile."),
                      llvm::cl::init(true));
 
@@ -37,7 +37,7 @@ Profile::ProfileMaps *Profile::GetProfileMaps(InstructionLocation addr) {
   uint64_t start_addr, end_addr;
   if (symbol_map_->GetSymbolInfoByAddr(addr.offset, &name,
                                        &start_addr, &end_addr)) {
-      std::cout << std::hex << addr << ", resolves to function " << *name << ", starts " << start_addr << ", ends " << end_addr << std::dec << std::endl;
+      DEBUG(std::cout << std::hex << addr << ", resolves to function " << *name << ", starts " << start_addr << ", ends " << end_addr << std::dec << std::endl);
       std::pair<SymbolProfileMaps::iterator, bool> ret =
         symbol_profile_maps_.insert(SymbolProfileMaps::value_type(*name, NULL));
     if (ret.second) {
@@ -46,15 +46,13 @@ Profile::ProfileMaps *Profile::GetProfileMaps(InstructionLocation addr) {
     }
     return ret.first->second;
   } else {
-      std::cout << std::hex << addr << " unresolved " << std::dec << std::endl;
+      DEBUG(std::cout << std::hex << addr << " unresolved " << std::dec << std::endl);
 
       return NULL;
   }
 }
 
 void Profile::AggregatePerFunctionProfile() {
-
-    std::cout << __FUNCTION__ << std::endl;
     symbol_map_->dumpaddressmap();
 
 
@@ -110,9 +108,9 @@ void Profile::ProcessPerFunctionProfile(string func_name,
       return;
     }
     for (const auto &range_count : maps.range_count_map) {
-        std::cout << range_count.first << std::endl ;
+        DEBUG(std::cout << range_count.first << std::endl);
       for (InstructionLocation loc = range_count.first.begin ; loc <= range_count.first.end;++loc) {
-          std::cout << loc << std::endl ;
+          DEBUG(std::cout << loc << std::endl) ;
         map[loc] += range_count.second;
       }
     }
@@ -126,12 +124,12 @@ void Profile::ProcessPerFunctionProfile(string func_name,
     InstructionMap::InstMap::const_iterator iter =
         inst_map.inst_map().find(address_count.first);
     if (iter == inst_map.inst_map().end()) {
-      std::cout << "this should not happen" << std::endl ;
+      DEBUG(std::cout << "this should not happen" << std::endl);
         continue;
     }
     const InstructionMap::InstInfo *info = iter->second;
     if (info == NULL) {
-        std::cout << "Should never happen" << std::endl ;
+        DEBUG(std::cout << "Should never happen" << std::endl) ;
       continue;
     }
     //  assert(false);
@@ -145,25 +143,25 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   }
 
   for (const auto &branch_count : maps.branch_count_map) {
-    std::cout << "Processing : " << std::hex << branch_count.first << std::dec << std::endl ;
+    DEBUG(std::cout << "Processing : " << std::hex << branch_count.first << std::dec << std::endl);
       inst_map.resolveAddress(branch_count.first.instruction,func_name);
       InstructionMap::InstMap::const_iterator iter =
         inst_map.inst_map().find(branch_count.first.instruction);
     if (iter == inst_map.inst_map().end()) {
-        std::cout << "Missing Instruction in branch " << std::endl ;
+        DEBUG(std::cout << "Missing Instruction in branch " << std::endl);
       continue;
     }
     const InstructionMap::InstInfo *info = iter->second;
     if (info == NULL) {
-      std::cout << "No Found branch target" << std::hex << branch_count.first << std::dec <<std::endl ;
+      DEBUG(std::cout << "No Found branch target" << std::hex << branch_count.first << std::dec <<std::endl) ;
       continue;
     }
 
-    std::cout << "Found branch target" << std:: hex << branch_count.first << std::dec <<std::endl ;
+    DEBUG(std::cout << "Found branch target" << std:: hex << branch_count.first << std::dec <<std::endl) ;
 
     const string *callee = symbol_map_->GetSymbolNameByStartAddr(branch_count.first.target);
     if (!callee) {
-        std::cout << "No callee found" << std::hex << branch_count.first.target << std::dec <<std::endl ;
+        DEBUG(std::cout << "No callee found" << std::hex << branch_count.first.target << std::dec <<std::endl) ;
       continue;
     }
     if (symbol_map_->map().count(*callee)) {

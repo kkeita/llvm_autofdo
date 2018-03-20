@@ -26,6 +26,7 @@
 #include "PerfSampleReader.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/ELFObjectFile.h"
+#define DEBUG_TYPE "test"
 namespace autofdo {
     using namespace std ;
     using experimental::InstructionLocation;
@@ -68,7 +69,7 @@ namespace autofdo {
                         /* FunctionNameKind PrintFunctions =*/ llvm::symbolize::FunctionNameKind::LinkageName,
                         /* bool UseSymbolTable =*/ false,
                         /* bool Demangle = */false,
-                        /* bool RelativeAddresses =*/ true,
+                        /* bool RelativeAddresses =*/ false,
                         /* std::string DefaultArch =*/ ""),
                 symbolizer(symbolizerOption) {
 
@@ -76,46 +77,55 @@ namespace autofdo {
 
         virtual ~LLVMAddr2line() {};
 
+        std::map<std::string, std::shared_ptr<llvm::object::OwningBinary<llvm::object::Binary>> > objectFileCache;
+
 
         uint64_t getVaddressFromFileOffset(const InstructionLocation & loc){
-            auto expected_file = llvm::object::createBinary(loc.objectFile);
-            if (!expected_file) {
-                llvm::errs() << "Couldn't open " << loc.objectFile;
-            }
-            llvm::object::Binary  * bb =  expected_file.get().getBinary();
-            //llvm::object::ELFObjectFileBase * elffile;
-            if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
-                llvm::object::ELF64LEObjectFile &elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
-                //find the section the address belongs to;
-                auto sections  = elffile.getELFFile()->program_headers();
-                if(!sections)
-                    return 0;
-                for (auto & section : sections.get()){
-                    if ( ( section.p_offset <= loc.offset) and ( loc.offset < section.p_offset + section.p_filesz)) {
-                        return section.p_vaddr + loc.offset ;
-                    }
+            auto it = objectFileCache.insert(decltype(objectFileCache)::value_type{loc.objectFile,nullptr});
+
+            if (it.second){
+                auto expected_file = llvm::object::createBinary(loc.objectFile);
+                if (!expected_file) {
+                    llvm::errs() << "Couldn't open " << loc.objectFile;
+                }
+                llvm::object::Binary  * bb =  expected_file.get().getBinary();
+                //llvm::object::ELFObjectFileBase * elffile;
+                if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
+                    it.first->second = std::make_shared<llvm::object::OwningBinary<llvm::object::Binary>>
+                            (std::move(expected_file.get()));
                 }
             }
-            return 0;
 
+
+            llvm::object::ELF64LEObjectFile &elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(it.first->second->getBinary());
+            auto sections  = elffile.getELFFile()->program_headers();
+            if(!sections)
+                return 0;
+            for (auto & section : sections.get()){
+                if ( ( section.p_offset <= loc.offset) and ( loc.offset < section.p_offset + section.p_filesz)) {
+                    return section.p_vaddr + loc.offset ;
+                }
+            }
+
+            return 0;
         }
         void GetInlineStack(const InstructionLocation & loc, SourceStack *stack) override {
             uint64_t vaddr = getVaddressFromFileOffset(loc);
             llvm::Expected<llvm::DIInliningInfo> st = std::move(symbolizer.symbolizeInlinedCode(loc.objectFile, vaddr));
             if (st) {
                 auto ss = st.get();
-                SourceStack &mystack = *stack; //;(ss.getNumberOfFrames());
+                SourceStack &mystack = *stack;
                 mystack.resize(ss.getNumberOfFrames());
                 for (int i = 0; i < ss.getNumberOfFrames(); i++) {
                     mystack[i].file_name = llvm::sys::path::filename(ss.getFrame(i).FileName.c_str());
-                    mystack[i].dir_name; //= ss.getFrame(i).FileName.c_str();
+                    mystack[i].dir_name;
                     mystack[i].discriminator = ss.getFrame(i).Discriminator;
                     mystack[i].start_line = ss.getFrame(i).StartLine;
                     mystack[i].func_name = ss.getFrame(i).FunctionName.c_str();
                     mystack[i].line = ss.getFrame(i).Line;
                 }
 
-                std::cout << "Inline stack for  : " << std::hex << loc << std::dec << std::endl;
+                DEBUG(std::cout << "Inline stack for  : " << std::hex << loc << std::dec << std::endl);
                 for (auto & info : mystack) {
                     std::cout << info << std::endl;
                 }
