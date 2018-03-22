@@ -7,49 +7,12 @@
 #include <map>
 #include<regex>
 #include "assert.h"
+#include <optional>
+#include "sample_reader.h"
 
 #pragma once
 namespace autofdo {
-
     namespace experimental {
-
-        struct InstructionLocation {
-            InstructionLocation & operator++(){
-                offset++;
-                return *this;
-            }
-            uint64_t operator-(const InstructionLocation &rhs) const {
-                assert(objectFile == rhs.objectFile);
-                assert(offset >= rhs.offset );
-                return offset - rhs.offset;
-            }
-            bool operator<(const InstructionLocation &rhs) const {
-                assert(this->objectFile == rhs.objectFile);
-                return offset < rhs.offset;
-            }
-
-
-            bool operator>(const InstructionLocation &rhs) const {
-                return rhs < *this;
-            }
-
-            bool operator<=(const InstructionLocation &rhs) const {
-                return !(rhs < *this);
-            }
-
-            bool operator>=(const InstructionLocation &rhs) const {
-                return !(*this < rhs);
-            }
-
-            friend std::ostream &operator<<(std::ostream &os, const InstructionLocation &location) {
-                os << "objectFile: " << location.objectFile << " offset: " << location.offset;
-                return os;
-            }
-
-            const std::string & objectFile;
-            uint64_t offset;
-        };
-
 
         struct MemoryMapping {
             std::string objectFile;
@@ -88,37 +51,6 @@ namespace autofdo {
         };
 
 
-        struct Branch {
-                        friend std::ostream &operator<<(std::ostream &os, const Branch &branch) {
-                os << "instruction: " << branch.instruction << " target: " << branch.target;
-                return os;
-            }
-
-            bool operator<(const Branch &rhs) const {
-                if (instruction < rhs.instruction)
-                    return true;
-                if (rhs.instruction < instruction)
-                    return false;
-                return target < rhs.target;
-            }
-
-            bool operator>(const Branch &rhs) const {
-                return rhs < *this;
-            }
-
-            bool operator<=(const Branch &rhs) const {
-                return !(rhs < *this);
-            }
-
-            bool operator>=(const Branch &rhs) const {
-                return !(*this < rhs);
-            }
-
-            InstructionLocation instruction;
-            InstructionLocation target;
-        };
-
-
         struct lbrElement {
             friend std::ostream &operator<<(std::ostream &os, const lbrElement &element) {
                 os << "to: " << element.to << " from: " << element.from;
@@ -135,37 +67,6 @@ namespace autofdo {
             std::vector<lbrElement> brstack;
         };
 
-        struct Range {
-            friend std::ostream &operator<<(std::ostream &os, const Range &range) {
-                os << "begin: " << range.begin << " end: " << range.end;
-                return os;
-            }
-
-
-            bool operator<(const Range &rhs) const {
-                if (begin < rhs.begin)
-                    return true;
-                if (rhs.begin < begin)
-                    return false;
-                return end < rhs.end;
-            }
-
-            bool operator>(const Range &rhs) const {
-                return rhs < *this;
-            }
-
-            bool operator<=(const Range &rhs) const {
-                return !(rhs < *this);
-            }
-
-            bool operator>=(const Range &rhs) const {
-                return !(*this < rhs);
-            }
-
-            InstructionLocation begin;
-            InstructionLocation end;
-        };
-
 /*
  * load samples from perf script --no-demangle --show-mmap-events -F ip,brstack output
  * TODO: use string_view vs string for more efficient parsing
@@ -174,21 +75,20 @@ namespace autofdo {
  * TODO: switch to named groups in the regexes
  * */
 
-        /*
-            class PerfDataSampleReader {
+
+            class PerfDataSampleReader : AbstractSampleReader {
 
                 std::vector<Branch> brstack; //lbr content;
                 std::vector<Range> ranges;
                 std::set<MemoryMapping> mappedAddressSpace;
             public:
                 std::ostream &log = std::cerr;
-                std::map<Branch, uint64_t> branch_count_map;
-                std::map<Range, uint64_t> range_count_map;
+                std::map<Branch, uint64_t> branchCountMap;
+                std::map<Range, uint64_t> rangeCountMap;
                 std::map<InstructionLocation, uint64_t> ip_count_map;
             private:
 
                 std::optional<InstructionLocation> resolveAddress(uint64_t address) {
-
                     auto mapping = std::lower_bound(mappedAddressSpace.begin(), mappedAddressSpace.end(), address,
                                                     [&address](const auto &mapped, uint64_t addr) {
                                                         return mapped.startAddress < addr;
@@ -207,9 +107,8 @@ namespace autofdo {
                     }
 
                     {
-                        InstructionLocation ret;
-                        ret.offset = (address - mapping->startAddress) + mapping->offset;
-                        ret.objectFile = mapping->objectFile;
+                        auto offset =  (address - mapping->startAddress) + mapping->offset;
+                        InstructionLocation ret{mapping->objectFile,offset};
                         log << "absolute address : " << address << ", resolved to " << ret << std::endl;
                         return std::make_optional(ret);
                     };
@@ -330,10 +229,8 @@ namespace autofdo {
                             auto &to = lbr[i].second;
 
                             if ((to) and (from)) {
-                                Branch br;
-                                br.instruction = from.value();
-                                br.target = to.value();
-                                branch_count_map[br] += 1;
+                                Branch br{from.value(),to.value()};
+                                branchCountMap[br] += 1;
                                 log << "New LBR element : " << br << std::endl;
                             } else {
                                 log << "Dropping lbr element : " << event.value().brstack[i] << std::endl;
@@ -341,10 +238,8 @@ namespace autofdo {
 
                             auto &next_from = lbr[i + 1].first;
                             if (to and next_from) {
-                                Range range;
-                                range.begin = to.value();
-                                range.end = next_from.value();
-                                range_count_map[range] += 1;
+                                Range range{to.value(),next_from.value()};
+                                rangeCountMap[range] += 1;
                                 log << "New Range : " << range << std::endl;
                             }
                         }
@@ -353,15 +248,37 @@ namespace autofdo {
                     }
                 }
 
+                const AddressCountMap &address_count_map() const override {
+                    return ip_count_map;
+                }
+
+                const RangeCountMap &range_count_map() const override {
+                    return rangeCountMap;
+                }
+
+                const BranchCountMap &branch_count_map() const override {
+                    return branchCountMap;
+                }
+
+
+                uint64_t GetTotalSampleCount() const override {
+                    return 0;
+                }
+
+                uint64_t GetTotalCount() const override {
+                    return 0;
+                }
+
             public:
 
-                void parse(std::ifstream &input) {
+                bool readProfile(std::ifstream &input) override {
                     std::string line;
                     log << std::hex;
                     int count = 0;
                     for (; !input.eof(); std::getline(input, line), count++) {
                         parseSingleLine(line);
                     };
+                    return true ;
                 };
 
             };
@@ -369,11 +286,11 @@ namespace autofdo {
             static int main2() {
                 PerfDataSampleReader loader{};
                 std::ifstream samples("/home/kaderkeita/CLionProjects/perfdataParser/perf.txt");
-                loader.parse(samples);
-                for (auto e : loader.range_count_map) {
+                loader.readProfile(samples);
+                for (auto e : loader.rangeCountMap) {
                     loader.log << "Range : " << e.first << ", count = " << e.second << std::endl;
                 }
-                for (auto e: loader.branch_count_map) {
+                for (auto e: loader.branchCountMap) {
                     loader.log << "Branch : " << e.first << ", count = " << e.second << std::endl;
                 }
                 for (auto e : loader.ip_count_map) {
@@ -382,7 +299,7 @@ namespace autofdo {
                 std::cout << "Hello, World!" << std::endl;
                 return 0;
             }
-            */
+
     }
 
 }

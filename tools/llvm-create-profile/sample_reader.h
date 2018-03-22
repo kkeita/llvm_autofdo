@@ -22,12 +22,112 @@
 #include <string>
 #include <vector>
 #include <utility>
-#include "PerfSampleReader.h"
-
-
+#include <assert.h>
+#include <iostream>
 namespace autofdo {
 
-using namespace std;
+    namespace experimental {
+
+        struct InstructionLocation {
+            InstructionLocation &operator++() {
+                offset++;
+                return *this;
+            }
+
+            uint64_t operator-(const InstructionLocation &rhs) const {
+                assert(objectFile == rhs.objectFile);
+                assert(offset >= rhs.offset);
+                return offset - rhs.offset;
+            }
+
+            bool operator<(const InstructionLocation &rhs) const {
+                assert(this->objectFile == rhs.objectFile);
+                return offset < rhs.offset;
+            }
+
+
+            bool operator>(const InstructionLocation &rhs) const {
+                return rhs < *this;
+            }
+
+            bool operator<=(const InstructionLocation &rhs) const {
+                return !(rhs < *this);
+            }
+
+            bool operator>=(const InstructionLocation &rhs) const {
+                return !(*this < rhs);
+            }
+
+            friend std::ostream &operator<<(std::ostream &os, const InstructionLocation &location) {
+                os << "objectFile: " << location.objectFile << " offset: " << location.offset;
+                return os;
+            }
+
+            const std::string &objectFile;
+            uint64_t offset;
+        };
+
+
+        struct Branch {
+            friend std::ostream &operator<<(std::ostream &os, const Branch &branch) {
+                os << "instruction: " << branch.instruction << " target: " << branch.target;
+                return os;
+            }
+
+            bool operator<(const Branch &rhs) const {
+                if (instruction < rhs.instruction)
+                    return true;
+                if (rhs.instruction < instruction)
+                    return false;
+                return target < rhs.target;
+            }
+
+            bool operator>(const Branch &rhs) const {
+                return rhs < *this;
+            }
+
+            bool operator<=(const Branch &rhs) const {
+                return !(rhs < *this);
+            }
+
+            bool operator>=(const Branch &rhs) const {
+                return !(*this < rhs);
+            }
+
+            InstructionLocation instruction;
+            InstructionLocation target;
+        };
+
+struct Range {
+    friend std::ostream &operator<<(std::ostream &os, const Range &range) {
+        os << "begin: " << range.begin << " end: " << range.end;
+        return os;
+    }
+            bool operator<(const Range &rhs) const {
+                if (begin < rhs.begin)
+                    return true;
+                if (rhs.begin < begin)
+                    return false;
+                return end < rhs.end;
+            }
+
+            bool operator>(const Range &rhs) const {
+                return rhs < *this;
+            }
+
+            bool operator<=(const Range &rhs) const {
+                return !(rhs < *this);
+            }
+
+            bool operator>=(const Range &rhs) const {
+                return !(*this < rhs);
+            }
+
+            InstructionLocation begin;
+            InstructionLocation end;
+        };
+    }
+        using namespace std;
 using experimental::InstructionLocation;
 using experimental::Range;
     using experimental::Branch;
@@ -58,7 +158,7 @@ typedef map<Branch, uint64_t> BranchCountMap;
 // Reads/Writes sample data from/to text file.
 // The text file format:
 //
-// number of entries in range_count_map
+// number of entries in rangeCountMap
 // from_1-to_1:count_1
 // from_2-to_2:count_2
 // ......
@@ -87,10 +187,7 @@ class TextSampleReaderWriter : public AbstractSampleReader {
       return branch_count_map_;
     }
 
-    std::set<InstructionLocation> GetSampledAddresses() const;
 
-    // Returns the sample count for a given instruction.
-    uint64_t GetSampleCountOrZero(uint64_t addr) const;
     // Returns the total sampled count.
     uint64_t GetTotalSampleCount() const;
     // Returns the max count.

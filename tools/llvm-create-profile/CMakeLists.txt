@@ -9,6 +9,7 @@ set(LLVM_LINK_COMPONENTS
         ProfileData
         Symbolize
         )
+set(CMAKE_CXX_COMPILER /usr/bin/g++-7)
 set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-fno-rtti)
 

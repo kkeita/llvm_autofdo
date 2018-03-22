@@ -31,19 +31,7 @@ bool MatchBinary(const string &name, const string &full_name) {
 }  // namespace
 
 namespace autofdo {
-std::set<InstructionLocation> TextSampleReaderWriter::GetSampledAddresses() const {
-  set<InstructionLocation> addrs;
-  if (range_count_map_.size() > 0) {
-    for (const auto &range_count : range_count_map_) {
-      addrs.insert(range_count.first.begin);
-    }
-  } else {
-    for (const auto &addr_count : address_count_map_) {
-      addrs.insert(addr_count.first);
-    }
-  }
-  return addrs;
-}
+
 
 
 uint64_t TextSampleReaderWriter::GetTotalSampleCount() const {
@@ -71,7 +59,7 @@ bool TextSampleReaderWriter::readProfile() {
   }
   uint64_t num_records;
 
-  // Reads in the range_count_map
+  // Reads in the rangeCountMap
   if (1 != fscanf(fp, "%llu\n", &num_records)) {
     llvm::errs() << "Error reading from " << profileFile;
     fclose(fp);
@@ -85,8 +73,6 @@ bool TextSampleReaderWriter::readProfile() {
       return false;
     }
 
-    InstructionLocation{objectFile,from};
-    InstructionLocation{objectFile,from};
     range_count_map_[Range{InstructionLocation{objectFile,from},
                            InstructionLocation{objectFile,to}}] += count;
   }
@@ -107,7 +93,7 @@ bool TextSampleReaderWriter::readProfile() {
     address_count_map_[InstructionLocation{objectFile,addr}] += count;
   }
 
-  // Reads in the branch_count_map
+  // Reads in the branchCountMap
   if (1 != fscanf(fp, "%llu\n", &num_records)) {
     llvm::errs() << "Error reading from " << profileFile;
     fclose(fp);

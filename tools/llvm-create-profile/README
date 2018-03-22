@@ -9,7 +9,7 @@ Change the llvm-symbolizer to make it match addr2line behavior to simplify testi
 
 Change the sample loading/addling api
 
-1 - Have only one place where we decide whether we are using range_count_map or  address_count_map
+1 - Have only one place where we decide whether we are using rangeCountMap or  address_count_map
 2 - Introduce SampleLocation as a way to represent a sample in a way that supports multiple objectfiles
 3 - Remove branch_count_map_ which doesnt seem used right now
 
