@@ -10,14 +10,16 @@
 #include "PerfSampleReader.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/ELFObjectFile.h"
+#include "llvm/IR/DebugInfoMetadata.h"
 
 
 namespace autofdo {
+    using llvm::DIInliningInfo;
+    using llvm::DILineInfo;
     using experimental::InstructionLocation;
     using llvm::symbolize::LLVMSymbolizer;
     using llvm::symbolize::LLVMSymbolizer;
-    using llvm::DIInliningInfo;
-    using llvm::DILineInfo;
+    using  llvm::DILocation;
     using llvm::object::Binary;
     using llvm::Expected;
 
@@ -25,6 +27,7 @@ namespace autofdo {
 
 
     class InstructionSymbolizer {
+
     public:
         explicit InstructionSymbolizer() :
                 symbolizerOption(
@@ -33,32 +36,33 @@ namespace autofdo {
                         /* bool Demangle = */false,
                         /* bool RelativeAddresses =*/ false,
                         /* std::string DefaultArch =*/ ""),
-                symbolizer(symbolizerOption) {};
+                symbolizer(symbolizerOption),sentinelValue(DIInliningInfo()) {
+            if(sentinelValue) {};
+        };
 
         Expected<DIInliningInfo> &symbolizeInstruction(const InstructionLocation &inst) {
-            auto it = instructionMap.insert(decltype(instructionMap)::value_type{inst, DIInliningInfo()});
+            auto it = instructionMap.insert(decltype(instructionMap)::value_type{inst, nullptr});
             if (it.second) {
                 uint64_t vaddr = getVaddressFromFileOffset(inst);
-                it.first->second = symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr);
+                //Expected expect to be cheched before beeing moved-assigned
+                it.first->second = std::make_unique<llvm::Expected<llvm::DIInliningInfo>>
+                            (symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr));
             }
-            return it.first->second;
+            return *it.first->second.get();
         }
 
-        static  uint64_t getDuplicationFactor(const DILineInfo & lineInfo) {
+        static  uint32_t getDuplicationFactor(const DILineInfo & lineInfo) {
                     return llvm::DILocation::getDuplicationFactorFromDiscriminator(lineInfo.Discriminator);
         }
 
-
         //TODO: the offset encoding should be probably be moved closer to the profile_writter
-        static uint64_t Offset(/*bool use_discriminator_encoding we always use the encoding*/) const {
-            bool use_discriminator_encoding = true ;
+        static uint32_t Offset(const DILineInfo &lineInfo
+                /*bool use_discriminator_encoding we always use the encoding*/)  {
             //TODO should we assert that line - start_line < 2^16?
-            return ((line - start_line) << 16) |
-                   (use_discriminator_encoding
-                    ? llvm::DILocation::getBaseDiscriminatorFromDiscriminator(
-                                   discriminator)
-                    : discriminator);
+            return ((lineInfo.Line - lineInfo.StartLine) << 16) |
+                    llvm::DILocation::getBaseDiscriminatorFromDiscriminator(lineInfo.Discriminator);
         }
+
     private:
         uint64_t getVaddressFromFileOffset(const InstructionLocation &loc) {
             auto it = objectFileCache.insert(decltype(objectFileCache)::value_type{loc.objectFile, nullptr});
@@ -89,7 +93,8 @@ namespace autofdo {
             return 0;
         }
 
-        std::map<InstructionLocation, DIInliningInfo> instructionMap;
+        Expected<DIInliningInfo> sentinelValue ;
+        std::map<InstructionLocation, std::unique_ptr<Expected<DIInliningInfo>>> instructionMap;
         mutable std::map<std::string, std::shared_ptr<llvm::object::OwningBinary<llvm::object::Binary>>> objectFileCache;
         llvm::symbolize::LLVMSymbolizer::Options symbolizerOption;
         mutable llvm::symbolize::LLVMSymbolizer symbolizer;

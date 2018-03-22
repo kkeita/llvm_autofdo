@@ -18,12 +18,13 @@
 #include <map>
 #include <set>
 
-#include "addr2line.h"
 #include "symbol_map.h"
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Support/CommandLine.h"
+#include "InstructionSymbolizer.h"
 #include <iostream>
+#include "llvm/ADT/Optional.h"
 
 llvm::cl::opt<int> DumpCutoffPercent ("dump_cutoff_percent",
                                       llvm::cl::desc("functions that has total count lower than this percentage of"
@@ -124,9 +125,9 @@ Symbol::~Symbol() {
 void Symbol::Merge(const Symbol *other) {
   total_count += other->total_count;
   head_count += other->head_count;
-  if (info.file_name.empty()) {
-      info.file_name = other->info.file_name;
-      info.dir_name = other->info.dir_name;
+  if (info.FileName.empty()) {
+      info.FileName = other->info.FileName;
+      //info.dir_name = other->info;
   }
   for (const auto &pos_count : other->pos_counts)
     pos_counts[pos_count.first] += pos_count.second;
@@ -138,7 +139,7 @@ void Symbol::Merge(const Symbol *other) {
     // new callee symbol with the clone's function name.
     if (ret.second) {
       ret.first->second = new Symbol();
-      ret.first->second->info.func_name = ret.first->first.second;
+      ret.first->second->info.FunctionName = ret.first->first.second;
     }
     ret.first->second->Merge(callsite_symbol.second);
   }
@@ -153,7 +154,7 @@ void SymbolMap::Merge() {
         (name_symbol.first != name &&
          name_symbol.second == ret.first->second)) {
       ret.first->second = new Symbol();
-      ret.first->second->info.func_name = ret.first->first.c_str();
+      ret.first->second->info.FunctionName = ret.first->first.c_str();
     }
     if (ret.first->second != name_symbol.second) {
       ret.first->second->Merge(name_symbol.second);
@@ -173,7 +174,9 @@ void SymbolMap::AddSymbol(const string &name) {
   std::pair<NameSymbolMap::iterator, bool> ret = map_.insert(
       NameSymbolMap::value_type(name, NULL));
   if (ret.second) {
-    ret.first->second = new Symbol(ret.first->first.c_str(), NULL, NULL, 0);
+    DILineInfo info;
+      info.FunctionName = name ;
+    ret.first->second = new Symbol(std::move(info));
     NameAliasMap::const_iterator alias_iter = name_alias_map_.find(name);
     if (alias_iter != name_alias_map_.end()) {
       for (const auto &name : alias_iter->second) {
@@ -378,26 +381,31 @@ void SymbolMap::AddSymbolEntryCount(const string &symbol_name, uint64_t count) {
 }
 
 Symbol *SymbolMap::TraverseInlineStack(const string &symbol_name,
-                                       const SourceStack &src,
+                                       const DIInliningInfo &src,
                                        uint64_t count) {
   Symbol *symbol = map_.find(symbol_name)->second;
   symbol->total_count += count;
-  const SourceInfo &info = src[src.size() - 1];
-  if (symbol->info.file_name.empty() && (!info.file_name.empty())) {
-    symbol->info.file_name = info.file_name;
-    symbol->info.dir_name = info.dir_name;
+  const DILineInfo &info =  src.getFrame(src.getNumberOfFrames() -1);
+  if (symbol->info.FileName.empty() && (!info.FileName.empty())) {
+    symbol->info.FileName = info.FileName;
+    //TODO: dirname is empty
+      //symbol->info.dir_name = info.dir_name;
   }
-  for (int i = src.size() - 1; i > 0; i--) {
-    std::pair<CallsiteMap::iterator, bool> ret =
+
+    for (int i = src.getNumberOfFrames() - 1; i > 0; i--) {
+        //We do not mutate these objects, but the API would return
+        // a copy if we were to use getFrame*
+        const auto & callerInfo = src.getFrame(i);
+        const auto & calleeInfo = src.getFrame(i -1);
+        auto offset = InstructionSymbolizer::Offset(callerInfo);
+
+        std::pair<CallsiteMap::iterator, bool> ret =
         symbol->callsites.insert(CallsiteMap::value_type(
-            Callsite(src[i].Offset(use_discriminator_encoding_),
-                     src[i - 1].func_name),
+            Callsite(offset,
+                     calleeInfo.FunctionName),
             NULL));
     if (ret.second) {
-      ret.first->second = new Symbol(src[i - 1].func_name.c_str(),
-                                     src[i - 1].dir_name.c_str(),
-                                     src[i - 1].file_name.c_str(),
-                                     src[i - 1].start_line);
+      ret.first->second = new Symbol(calleeInfo);
     }
     symbol = ret.first->second;
     symbol->total_count += count;
@@ -406,14 +414,15 @@ Symbol *SymbolMap::TraverseInlineStack(const string &symbol_name,
 }
 
 void SymbolMap::AddSourceCount(const string &symbol_name,
-                               const SourceStack &src,
+                               const DIInliningInfo &src,
                                uint64_t count, uint64_t num_inst,
                                Operation op) {
-  if (src.size() == 0) {
+  if (src.getNumberOfFrames() == 0) {
     return;
   }
-  uint32_t offset = src[0].Offset(use_discriminator_encoding_);
-  Symbol *symbol = TraverseInlineStack(symbol_name, src, count);
+  uint32_t offset = InstructionSymbolizer::Offset(src.getFrame(0));
+
+    Symbol *symbol = TraverseInlineStack(symbol_name, src, count);
   if (op == MAX) {
     if (count > symbol->pos_counts[offset].count) {
       symbol->pos_counts[offset].count = count;
@@ -428,14 +437,14 @@ void SymbolMap::AddSourceCount(const string &symbol_name,
 }
 
 void SymbolMap::AddIndirectCallTarget(const string &symbol_name,
-                                      const SourceStack &src,
+                                      const DIInliningInfo &src,
                                       const string &target,
                                       uint64_t count) {
-  if (src.size() == 0) {
+  if (src.getNumberOfFrames() == 0) {
     return;
   }
   Symbol *symbol = TraverseInlineStack(symbol_name, src, 0);
-  symbol->pos_counts[src[0].Offset(use_discriminator_encoding_)].target_map[
+  symbol->pos_counts[InstructionSymbolizer::Offset(src.getFrame(0))].target_map[
       GetOriginalName(target.c_str())] = count;
 }
 
@@ -451,10 +460,10 @@ struct CallsiteLessThan {
 
 void Symbol::Dump(int ident) const {
   if (ident == 0) {
-    printf("%s total:%llu head:%llu\n", info.func_name.c_str(),
+    printf("%s total:%llu head:%llu\n", info.FunctionName.c_str(),
            total_count, head_count);
   } else {
-    printf("%s total:%llu\n", info.func_name.c_str(), total_count);
+    printf("%s total:%llu\n", info.FunctionName.c_str(), total_count);
   }
   std::vector<uint32_t> positions;
   for (const auto &pos_count : pos_counts)
@@ -463,7 +472,7 @@ void Symbol::Dump(int ident) const {
   for (const auto &pos : positions) {
     PositionCountMap::const_iterator ret = pos_counts.find(pos);
     assert(ret != pos_counts.end());
-    PrintSourceLocation(info.start_line, pos, ident + 2);
+    PrintSourceLocation(info.StartLine, pos, ident + 2);
     printf("%llu", ret->second.count);
     TargetCountPairs target_count_pairs;
     GetSortedTargetCountPairs(ret->second.target_map,
@@ -479,7 +488,7 @@ void Symbol::Dump(int ident) const {
   }
   std::sort(calls.begin(), calls.end(), CallsiteLessThan());
   for (const auto &callsite : calls) {
-    PrintSourceLocation(info.start_line, callsite.first, ident + 2);
+    PrintSourceLocation(info.StartLine, callsite.first, ident + 2);
     callsites.find(callsite)->second->Dump(ident + 2);
   }
 }

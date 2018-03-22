@@ -25,34 +25,23 @@
 #include <utility>
 #include <vector>
 
-#include "source_info.h"
 #include "PerfSampleReader.h"
+#include "InstructionSymbolizer.h"
+
+#define DEBUG(x) {}
 // Macros from gcc (profile.c)
 //#define NUM_GCOV_WORKING_SETS 128
 //#define WORKING_SET_INSN_PER_BB 10
 
 namespace autofdo {
-
+    using namespace std;
     using experimental::InstructionLocation;
     using experimental::Range ;
-typedef std::map<string, uint64_t> CallTargetCountMap;
-typedef std::pair<string, uint64_t> TargetCountPair;
+typedef std::map<std::string, uint64_t> CallTargetCountMap;
+typedef std::pair<std::string, uint64_t> TargetCountPair;
 typedef std::vector<TargetCountPair> TargetCountPairs;
 
-class Addr2line;
 
-/* Struct from gcc (basic-block.h).
-   Working set size statistics for a given percentage of the entire
-   profile (sum_all from the counter summary).  */
-
-//    struct gcov_working_set_info {
-// public:
-//  gcov_working_set_info() : num_counters(0), min_counter(0) {}
-  /* Number of hot counters included in this working set.  */
-//  uint32_t num_counters;
-  /* Smallest counter included in this working set.  */
-//  uint64_t min_counter;
-//};
 
 // Returns a sorted vector of target_count pairs. target_counts is a pointer
 // to an empty vector in which the output will be stored.
@@ -71,9 +60,7 @@ class ProfileInfo {
   CallTargetCountMap target_map;
 };
 
-// Map from source stack to profile,
-// TODO(dehao): deprecate this when old profile format is deprecated.
-typedef std::map<const SourceStack, ProfileInfo> SourceStackCountMap;
+
 
 // Map from a source location (represented by offset+discriminator) to profile.
 typedef std::map<uint32_t, ProfileInfo> PositionCountMap;
@@ -105,15 +92,15 @@ typedef std::map<Callsite, Symbol *, CallsiteLess> CallsiteMap;
 class Symbol {
  public:
   // This constructor is used to create inlined symbol.
-  Symbol(const char *name, const char *dir, const char *file, uint32_t start)
-      : info(SourceInfo(name, dir, file, start, 0, 0)),
+  Symbol(const  DILineInfo & info)
+      : info(info),
         total_count(0), head_count(0) {}
 
   // This constructor is used to create aliased symbol.
   Symbol(const Symbol *src, const char *new_func_name)
       : info(src->info), total_count(src->total_count),
         head_count(src->head_count) {
-    info.func_name = std::string(new_func_name);
+    info.FunctionName = std::string(new_func_name);
   }
 
   Symbol() : total_count(0), head_count(0) {}
@@ -128,7 +115,7 @@ class Symbol {
         return name != "" ? name : "noname" ;
     }
   string name() const {
-    return Name(info.func_name.c_str());
+    return Name(info.FunctionName.c_str());
   }
 
   // Merges profile stored in src symbol with this symbol.
@@ -148,7 +135,7 @@ class Symbol {
   uint64_t MaxPosCallsiteCount() const;
 
   // Source information about the the symbol (func_name, file_name, etc.)
-  SourceInfo info;
+  DILineInfo info;
   // The total sampled count.
   uint64_t total_count;
   // The total sampled count in the head bb.
@@ -286,7 +273,7 @@ class SymbolMap {
   //   count: total sampled count.
   //   num_inst: number of instructions that is mapped to the source.
   //   op: operation used to calculate count (SUM or MAX).
-  void AddSourceCount(const string &symbol, const SourceStack &source,
+  void AddSourceCount(const string &symbol, const DIInliningInfo &source,
                       uint64_t count, uint64_t num_inst, Operation op);
 
   // Adds the indirect call target to source stack.
@@ -294,12 +281,12 @@ class SymbolMap {
   //   source: source location (in terms of inlined source stack).
   //   target: indirect call target.
   //   count: total sampled count.
-  void AddIndirectCallTarget(const string &symbol, const SourceStack &source,
+  void AddIndirectCallTarget(const string &symbol, const DIInliningInfo &source,
                              const string &target, uint64_t count);
 
   // Traverses the inline stack in source, update the symbol map by adding
   // count to the total count in the inlined symbol. Returns the leaf symbol.
-  Symbol *TraverseInlineStack(const string &symbol, const SourceStack &source,
+  Symbol *TraverseInlineStack(const string &symbol, const DIInliningInfo &source,
                               uint64_t count);
 
   // Updates function name, start_addr, end_addr of a function that has a

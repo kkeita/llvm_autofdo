@@ -22,7 +22,6 @@
 #include <string>
 
 #include "sample_reader.h"
-#include "instruction_map.h"
 #include "InstructionSymbolizer.h"
 
 namespace autofdo {
@@ -40,9 +39,7 @@ class Profile {
   //   addr2line: an Addr2line.
   //   symbol_map: the symbol map is written by this class to store all symbol
   //               information.
-  Profile(const AbstractSampleReader *sample_reader,
-          const string &binary_name,
-          Addr2line *addr2line,
+  Profile(const AbstractSampleReader *sample_reader, const string &binary_name,
           SymbolMap *symbol_map)
       : sample_reader_(sample_reader),
         symbol_map_(symbol_map) {}

@@ -17,11 +17,11 @@
 #include <memory>
 
 #include "profile_creator.h"
-#include "addr2line.h"
 #include "profile.h"
 #include "profile_writer.h"
 #include "sample_reader.h"
 #include "symbol_map.h"
+#include "InstructionSymbolizer.h"
 
 namespace autofdo {
     using namespace std;
@@ -66,8 +66,7 @@ bool ProfileCreator::ReadSample(const string &input_profile_name,
   return true;
 }
 
-bool ProfileCreator::ComputeProfile(SymbolMap *symbol_map,
-                                    Addr2line **addr2line) {
+bool ProfileCreator::ComputeProfile(SymbolMap *symbol_map) {
   Profile profile(sample_reader_, binary_, symbol_map);
   profile.ComputeProfile();
 
@@ -78,14 +77,11 @@ bool ProfileCreator::CreateProfileFromSample(ProfileWriter *writer,
                                              const string &output_name) {
   SymbolMap symbol_map(binary_);
   symbol_map.set_use_discriminator_encoding(use_discriminator_encoding_);
-  Addr2line *addr2line = nullptr;
-  if (!ComputeProfile(&symbol_map, &addr2line)) return false;
+  if (!ComputeProfile(&symbol_map) )return false;
 
   writer->setSymbolMap(&symbol_map);
   bool ret = writer->WriteToFile(output_name);
-
-  delete addr2line;
-  return ret;
+    return ret;
 }
 
 uint64_t ProfileCreator::TotalSamples() {

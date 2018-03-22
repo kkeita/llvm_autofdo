@@ -21,7 +21,6 @@
 #include <utility>
 #include <vector>
 
-#include "instruction_map.h"
 #include "symbol_map.h"
 #include "sample_reader.h"
 #include "llvm/Support/CommandLine.h"
@@ -55,9 +54,7 @@ Profile::ProfileMaps *Profile::GetProfileMaps(InstructionLocation addr) {
 void Profile::AggregatePerFunctionProfile() {
     DEBUG(symbol_map_->dumpaddressmap());
 
-
-  uint64_t start = symbol_map_->base_addr();
-  const AddressCountMap *count_map = &sample_reader_->address_count_map();
+    const AddressCountMap *count_map = &sample_reader_->address_count_map();
   for (const auto &addr_count : *count_map) {
     ProfileMaps *maps = GetProfileMaps(addr_count.first);
     if (maps != NULL) {
@@ -97,10 +94,7 @@ uint64_t Profile::ProfileMaps::GetAggregatedCount() const {
 
 void Profile::ProcessPerFunctionProfile(string func_name,
                                         const ProfileMaps &maps) {
-  //inst_map.BuildPerFunctionInstructionMap(func_name, maps.start_addr, maps.end_addr);
 
-  //std::cout << "Map for function : " << func_name;
-  //std::cout << inst_map <<std::endl ;
   AddressCountMap map;
   const AddressCountMap *map_ptr;
   if (UseLbr) {
@@ -120,34 +114,30 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   }
 
   for (const auto &address_count : *map_ptr) {
-    auto sourceInfo = symbolizer.symbolizeInstruction(address_count.first);
+    auto &sourceInfo = symbolizer.symbolizeInstruction(address_count.first);
 
-    if (sourceInfo) {
+    if (!sourceInfo) {
         DEBUG(std::cout << "Should never happen" << std::endl) ;
       continue;
     }
 
 
     if (sourceInfo.get().getNumberOfFrames() > 0) {
+      auto duplicationFactor = InstructionSymbolizer::getDuplicationFactor(
+              sourceInfo.get().getFrame(0));
       symbol_map_->AddSourceCount(
-          func_name, info->source_stack,
-          address_count.second * info->source_stack[0].DuplicationFactor(), 0,
+          func_name, sourceInfo.get(),
+          address_count.second * duplicationFactor, 0,
           SymbolMap::MAX);
     }
   }
 
   for (const auto &branch_count : maps.branch_count_map) {
     DEBUG(std::cout << "Processing : " << std::hex << branch_count.first << std::dec << std::endl);
-      inst_map.resolveAddress(branch_count.first.instruction,func_name);
-      InstructionMap::InstMap::const_iterator iter =
-        inst_map.inst_map().find(branch_count.first.instruction);
-    if (iter == inst_map.inst_map().end()) {
-        DEBUG(std::cout << "Missing Instruction in branch " << std::endl);
-      continue;
-    }
-    const InstructionMap::InstInfo *info = iter->second;
-    if (info == NULL) {
-      DEBUG(std::cout << "No Found branch target" << std::hex << branch_count.first << std::dec <<std::endl) ;
+      auto &instInfo = symbolizer.symbolizeInstruction(branch_count.first.instruction);
+
+    if (!instInfo) {
+      DEBUG(std::cout << "Missing Instruction in branch " << std::endl);
       continue;
     }
 
@@ -160,7 +150,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
     }
     if (symbol_map_->map().count(*callee)) {
       symbol_map_->AddSymbolEntryCount(*callee, branch_count.second);
-      symbol_map_->AddIndirectCallTarget(func_name, info->source_stack, *callee, branch_count.second);
+      symbol_map_->AddIndirectCallTarget(func_name, instInfo.get(), *callee, branch_count.second);
     }
   }
 

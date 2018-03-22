@@ -13,13 +13,11 @@ set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-fno-rtti)
 
 add_llvm_tool(llvm-create-prof
-        addr2line.cc
-        instruction_map.cc
+        InstructionSymbolizer.cpp
         profile_creator.cc
         profile_writer.cc
         sample_reader.cc
-        source_info.cc
-        symbol_map.cc
+        symbol_map.cpp
         profile.cc
         llvm_profile_writer.cc
-        create_llvm_prof.cc)
+        llvm-create-profile.cpp)

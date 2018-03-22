@@ -17,7 +17,6 @@
 #ifndef AUTOFDO_PROFILE_CREATOR_H_
 #define AUTOFDO_PROFILE_CREATOR_H_
 
-#include "addr2line.h"
 #include "sample_reader.h"
 #include "symbol_map.h"
 #include "profile_writer.h"
@@ -65,8 +64,7 @@ class ProfileCreator {
 
   // Computes the profile and updates the given symbol map and addr2line
   // instance.
-  bool ComputeProfile(autofdo::SymbolMap *symbol_map,
-                      autofdo::Addr2line **addr2line);
+  bool ComputeProfile(autofdo::SymbolMap *symbol_map);
 
  private:
   AbstractSampleReader *sample_reader_;

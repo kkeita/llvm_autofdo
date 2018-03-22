@@ -110,7 +110,7 @@ void LLVMProfileBuilder::Visit(const Symbol *node) {
     // If this is a nested inline call, update its total count.
     if (std::error_code EC = llvm::MergeResult(
             result_, profile.addTotalSamples(node->total_count))){
-      llvm::errs() << "Error updating total samples for '" << node->info.func_name
+      llvm::errs() << "Error updating total samples for '" << node->info.FunctionName
                  << "': " << EC.message();
     exit(-1);
     }
@@ -124,7 +124,7 @@ void LLVMProfileBuilder::Visit(const Symbol *node) {
     const auto &num_samples = pos_count.second.count;
     if (std::error_code EC = llvm::MergeResult(
             result_, profile.addBodySamples(line, discriminator, num_samples))) {
-        llvm::errs() << "Error updating body samples for '" << node->info.func_name
+        llvm::errs() << "Error updating body samples for '" << node->info.FunctionName
                      << "': " << EC.message();
     }
     // If there is a call at this location, emit the possible
@@ -138,7 +138,7 @@ void LLVMProfileBuilder::Visit(const Symbol *node) {
                                                       target_count.first,
                                                       target_count.second))){
         llvm::errs() << "Error updating called target samples for '"
-                   << node->info.func_name << "': " << EC.message();
+                   << node->info.FunctionName << "': " << EC.message();
       }
     }
   }

@@ -81,13 +81,13 @@ class ProfileDumper : public SymbolTraverser {
   }
 
  protected:
-  void DumpSourceInfo(SourceInfo info, int indent) {
-    printf("%*sDirectory name: %s\n", indent, " ", info.dir_name.c_str());
-    printf("%*sFile name:      %s\n", indent, " ", info.file_name.c_str());
-    printf("%*sFunction name:  %s\n", indent, " ", info.func_name.c_str());
-    printf("%*sStart line:     %u\n", indent, " ", info.start_line);
-    printf("%*sLine:           %u\n", indent, " ", info.line);
-    printf("%*sDiscriminator:  %u\n", indent, " ", info.discriminator);
+  void DumpSourceInfo(const DILineInfo &info, int indent) {
+    //printf("%*sDirectory name: %s\n", indent, " ", info.dir_name.c_str());
+    printf("%*sFile name:      %s\n", indent, " ", info.FileName.c_str());
+    printf("%*sFunction name:  %s\n", indent, " ", info.FunctionName.c_str());
+    printf("%*sStart line:     %u\n", indent, " ", info.StartLine);
+    printf("%*sLine:           %u\n", indent, " ", info.Line);
+    printf("%*sDiscriminator:  %u\n", indent, " ", info.Discriminator);
   }
 
   void PrintSourceLocation(uint32_t start_line, uint32_t offset) {
@@ -140,7 +140,7 @@ class ProfileDumper : public SymbolTraverser {
       ProfileInfo info = pos_count->second;
 
       printf("#%d: location (line[.discriminator]) = ", i);
-      PrintSourceLocation(node->info.start_line, location);
+      PrintSourceLocation(node->info.StartLine, location);
       printf("\n");
       printf("#%d: profile info execution count = %llu\n", i, info.count);
       printf("#%d: profile info number of instructions = %llu\n", i,
