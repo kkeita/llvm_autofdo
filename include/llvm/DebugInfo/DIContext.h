@@ -81,7 +81,7 @@ class DIInliningInfo {
 public:
   DIInliningInfo() = default;
 
-  DILineInfo getFrame(unsigned Index) const {
+  const DILineInfo & getFrame(unsigned Index) const {
     assert(Index < Frames.size());
     return Frames[Index];
   }
