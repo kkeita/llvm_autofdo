@@ -830,31 +830,6 @@ bool DWARFDebugLine::LineTable::parse(DWARFDataExtractor &DebugLineData,
   // Sort all sequences so that address lookup will work faster.
   if (!Sequences.empty()) {
     std::sort(Sequences.begin(), Sequences.end(), Sequence::orderByLowPC);
-    if (Sequences.size() > 1) {
-        for (auto it = Sequences.begin(); it != (Sequences.end() -1); ++it){
-        auto next = it;
-        next++;
-        if (it->HighPC > next->LowPC){
-          errs() << "Overlapping sequences\n";
-          //std::out << std::hex() << it->LowPC <<
-
-          }
-      }
-    }
-
-        std::cerr << "Printing sequence : " << std::endl ;
-        for (auto it = Sequences.begin(); it != Sequences.end(); ++it){
-            std::set<uint64_t> address;
-            for (auto i = it->FirstRowIndex; i < it->LastRowIndex ; ++i){
-                address.insert(this->Rows[i].Address);
-            }
-
-            std::cerr  << std::hex << "LowPC: " << it->LowPC << ", HighPC: " << it->HighPC
-                       << std::dec << ", LowRow: " << it->FirstRowIndex << ", HighRow: " << it->LastRowIndex
-
-                       << ",distinct addresses: "<< address.size() <<"\n";
-
-        }
     // Note: actually, instruction address ranges of sequences should not
     // overlap (in shared objects and executables). If they do, the address
     // lookup would still work, though, but result would be ambiguous.
@@ -870,7 +845,6 @@ uint32_t
 DWARFDebugLine::LineTable::findRowInSeq(const DWARFDebugLine::Sequence &Seq,
                                         uint64_t Address) const {
 
-    std::cout << "RESOLVING ADDRESS :" << std::endl;
   if (!Seq.containsPC(Address))
     return UnknownRowIndex;
   // Search for instruction address in the rows describing the sequence.
@@ -880,21 +854,18 @@ DWARFDebugLine::LineTable::findRowInSeq(const DWARFDebugLine::Sequence &Seq,
   Row.Address = Address;
   RowIter FirstRow = Rows.begin() + Seq.FirstRowIndex;
   RowIter LastRow = Rows.begin() + Seq.LastRowIndex;
-    LineTable::RowIter RowPos = std::lower_bound(
-      FirstRow, LastRow, Row, DWARFDebugLine::Row::orderByAddress);
+    LineTable::RowIter RowPos = std::lower_bound(FirstRow, LastRow, Row, DWARFDebugLine::Row::orderByAddress);
     if (RowPos == LastRow) {
     return Seq.LastRowIndex - 1;
   }
   uint32_t Index = Seq.FirstRowIndex + (RowPos - FirstRow);
-
-
     if (RowPos->Address > Address) {
     if (RowPos == FirstRow)
       return UnknownRowIndex;
     else
       Index--;
   }
-
+    //For compatibilty with addr2line, resolve the address to the highest line number
     while(Rows[Index+1].Address == Address)
     {Index++;};
   return Index;
