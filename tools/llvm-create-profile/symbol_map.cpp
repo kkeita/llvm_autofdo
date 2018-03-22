@@ -342,33 +342,7 @@ void SymbolMap::BuildSymbolMap() {
                 }
             }
         }
-    } else if (llvm::dyn_cast<llvm::object::ELF32LEObjectFile>(bb))  {
-        llvm::object::ELF32LEObjectFile & elffile = *llvm::dyn_cast<llvm::object::ELF32LEObjectFile>(bb);
-        if(elffile.getELFFile()->getHeader()->e_type != llvm::ELF::ET_EXEC) {
-            llvm::errs() << "Couldnt open " << binary_ << "excutable only ";
-        } else {
-            for (auto & header : elffile.getELFFile()->program_headers().get()) {
-                if(header.p_type !=  llvm::ELF::PT_LOAD)
-                    continue;
-                base_addr_ = header.p_vaddr;
-            }
-
-            for (auto & symb : elffile.symbols()) {
-
-                if (symb.getSize() == 0) {
-                    continue ;
-                }
-                std::pair<AddressSymbolMap::iterator, bool> ret =
-                        address_symbol_map_.insert(
-                                std::make_pair(symb.getAddress().get()  , std::make_pair(string(symb.getName().get()),
-                                                                                       symb.getSize())));
-                if (!ret.second) {
-                    (name_alias_map_)[ret.first->second.first].insert(symb.getName().get());
-                }
-            }
-
-        }
-    } else {
+    }  else {
         llvm::errs() << "Couldnt open " << binary_ << "Wrong file format ";
     }
 
