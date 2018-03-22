@@ -36,8 +36,7 @@ namespace autofdo {
                         /* bool Demangle = */false,
                         /* bool RelativeAddresses =*/ false,
                         /* std::string DefaultArch =*/ ""),
-                symbolizer(symbolizerOption),sentinelValue(DIInliningInfo()) {
-            if(sentinelValue) {};
+                symbolizer(symbolizerOption) {
         };
 
         Expected<DIInliningInfo> &symbolizeInstruction(const InstructionLocation &inst) {
@@ -55,9 +54,9 @@ namespace autofdo {
                     return llvm::DILocation::getDuplicationFactorFromDiscriminator(lineInfo.Discriminator);
         }
 
-        //TODO: the offset encoding should be probably be moved closer to the profile_writter
+        //TODO: the offset encoding should probably be moved closer to the profile_writer
         static uint32_t Offset(const DILineInfo &lineInfo
-                /*bool use_discriminator_encoding we always use the encoding*/)  {
+                /*bool use_discriminator_encoding :we always use the encoding*/)  {
             //TODO should we assert that line - start_line < 2^16?
             return ((lineInfo.Line - lineInfo.StartLine) << 16) |
                     llvm::DILocation::getBaseDiscriminatorFromDiscriminator(lineInfo.Discriminator);
@@ -74,7 +73,7 @@ namespace autofdo {
                 }
                 llvm::object::Binary *bb = expected_file.get().getBinary();
                 if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
-                    it.first->second = std::make_shared<llvm::object::OwningBinary<llvm::object::Binary>>
+                    it.first->second = std::make_unique<llvm::object::OwningBinary<llvm::object::Binary>>
                             (std::move(expected_file.get()));
                 }
             }
@@ -93,7 +92,6 @@ namespace autofdo {
             return 0;
         }
 
-        Expected<DIInliningInfo> sentinelValue ;
         std::map<InstructionLocation, std::unique_ptr<Expected<DIInliningInfo>>> instructionMap;
         mutable std::map<std::string, std::shared_ptr<llvm::object::OwningBinary<llvm::object::Binary>>> objectFileCache;
         llvm::symbolize::LLVMSymbolizer::Options symbolizerOption;

@@ -184,11 +184,8 @@ class SymbolMap {
   void set_count_threshold(int64_t n) {count_threshold_ = n;}
   int64_t count_threshold() const {return count_threshold_;}
 
-    // TODO : fix this
   // Returns true if the count is large enough to be emitted.
   bool ShouldEmit(int64_t count) const {
-      return true ;
-    assert(count_threshold_> 0);
     return count > count_threshold_;
   }
 

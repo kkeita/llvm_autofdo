@@ -189,32 +189,11 @@ void SymbolMap::AddSymbol(const string &name) {
 
 
 
-//FIX Me : we shouldnt any minimum here
-const int64_t kMinSamples = 10;
 
 void SymbolMap::CalculateThresholdFromTotalCount(int64_t total_count) {
   count_threshold_ = total_count * SampleThresholdFrac;
-  if (count_threshold_ < kMinSamples) {
-    count_threshold_ = kMinSamples;
-  }
 }
 
-void SymbolMap::CalculateThreshold() {
-  // If count_threshold_ is pre-calculated, use pre-caculated value.
-  assert(count_threshold_ == 0);
-  int64_t total_count = 0;
-  std::set<string> visited;
-  for (const auto &name_symbol : map_) {
-    if (!visited.count(name_symbol.second->name())) {
-      visited.insert(name_symbol.second->name());
-      total_count += name_symbol.second->total_count;
-    }
-  }
-  count_threshold_ = total_count * SampleThresholdFrac;
-  if (count_threshold_ < kMinSamples) {
-    count_threshold_ = kMinSamples;
-  }
-}
 
 const bool SymbolMap::GetSymbolInfoByAddr(
     uint64_t addr, const string **name,
@@ -239,28 +218,7 @@ const bool SymbolMap::GetSymbolInfoByAddr(
     return false;
   }
 }
-    static uint64_t getVaddressFromFileOffset(const InstructionLocation & loc){
-        auto expected_file = llvm::object::createBinary(loc.objectFile);
-        if (!expected_file) {
-            llvm::errs() << "Couldnt open " << loc.objectFile;
-        }
-        llvm::object::Binary  * bb =  expected_file.get().getBinary();
-        //llvm::object::ELFObjectFileBase * elffile;
-        if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
-            llvm::object::ELF64LEObjectFile &elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
-            //find the section the address belongs to;
-            auto sections  = elffile.getELFFile()->program_headers();
-            if(!sections)
-                return 0;
-            for (auto & section : sections.get()){
-                if ( ( section.p_offset <= loc.offset) and ( loc.offset < section.p_offset + section.p_filesz)) {
-                    return section.p_vaddr + loc.offset ;
-                }
-            }
-        }
-        return 0;
 
-    }
 
 const string *SymbolMap::GetSymbolNameByStartAddr(const InstructionLocation&  loc) const {
     DEBUG(std::cout << "Target lookup : " << std::hex << loc << std::dec << std::endl) ;
@@ -280,7 +238,6 @@ void SymbolMap::BuildSymbolMap() {
         llvm::errs() << "Couldnt open " << binary_;
     }
     llvm::object::Binary  * bb =  expected_file.get().getBinary();
-    //llvm::object::ELFObjectFileBase * elffile;
     if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
         llvm::object::ELF64LEObjectFile & elffile = *llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb);
         if(elffile.getELFFile()->getHeader()->e_type != llvm::ELF::ET_EXEC) {

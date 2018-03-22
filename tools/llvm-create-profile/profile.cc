@@ -160,8 +160,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
 }
 
 void Profile::ComputeProfile() {
-  symbol_map_->CalculateThresholdFromTotalCount(
-      sample_reader_->GetTotalCount());
+  symbol_map_->CalculateThresholdFromTotalCount(sample_reader_->GetTotalCount());
   AggregatePerFunctionProfile();
 
   // First add all symbols that needs to be outputted to the symbol_map_. We
