@@ -25,7 +25,7 @@
 #include "sample_reader.h"
 #include "llvm/Support/CommandLine.h"
 
-#define DEBUG_TYPE "test"
+#define DEBUG(x) {};
 llvm::cl::opt<bool> UseLbr("use-lbr",llvm::cl::desc("Whether to use lbr profile."),
                      llvm::cl::init(true));
 

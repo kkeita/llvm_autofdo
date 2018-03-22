@@ -167,13 +167,6 @@ class SymbolMap {
     if (!binary.empty()) {
       BuildSymbolMap();
       BuildNameAddressMap();
-        for(auto & name : name_alias_map_) {
-            std::cout << name.first  <<" : [";
-            for (auto & alias : name.second){
-                std::cout << alias << ", ";
-            }
-            std::cout << "] \n";
-        }
     }
   }
 
@@ -332,6 +325,15 @@ public:
                                  << ", name : "<<  addr.second.first <<
                                  std::dec << ", size : "<< addr.second.second
                                  << std::endl ;
+        }
+    }
+    void dumpAliasMap(){
+        for(auto & name : name_alias_map_) {
+            std::cout << name.first  <<" : [";
+            for (auto & alias : name.second){
+                std::cout << alias << ", ";
+            }
+            std::cout << "] \n";
         }
     }
 private:

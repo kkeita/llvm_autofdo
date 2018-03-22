@@ -25,6 +25,7 @@
 #include "InstructionSymbolizer.h"
 #include <iostream>
 #include "llvm/ADT/Optional.h"
+#define DEBUG(x) {}
 
 llvm::cl::opt<int> DumpCutoffPercent ("dump_cutoff_percent",
                                       llvm::cl::desc("functions that has total count lower than this percentage of"
