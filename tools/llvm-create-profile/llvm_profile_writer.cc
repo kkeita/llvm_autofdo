@@ -27,7 +27,7 @@
 #include "llvm_profile_writer.h"
 #include "profile_writer.h"
 
-bool debug_dump = false ;
+//bool debug_dump = false ;
 
 namespace autofdo {
 using namespace std;
@@ -152,7 +152,7 @@ llvm::StringRef LLVMProfileBuilder::GetNameRef(const string &str) {
 }
 
 bool LLVMProfileWriter::WriteToFile(const string &output_filename) {
-  if (debug_dump) Dump();
+  if (DebugDump) Dump();
 
   // Populate the symbol table. This table contains all the symbols
   // for functions found in the binary.

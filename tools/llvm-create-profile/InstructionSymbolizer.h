@@ -11,7 +11,7 @@
 #include "llvm/Object/Binary.h"
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/IR/DebugInfoMetadata.h"
-
+#include "llvm/DebugInfo/Symbolize/DIPrinter.h"
 
 namespace autofdo {
     using llvm::DIInliningInfo;
@@ -36,17 +36,22 @@ namespace autofdo {
                         /* bool Demangle = */false,
                         /* bool RelativeAddresses =*/ false,
                         /* std::string DefaultArch =*/ ""),
-                symbolizer(symbolizerOption) {
+                symbolizer(symbolizerOption),Printer(llvm::errs()){
         };
 
         Expected<DIInliningInfo> &symbolizeInstruction(const InstructionLocation &inst) {
             auto it = instructionMap.insert(decltype(instructionMap)::value_type{inst, nullptr});
+            std::cerr << "Symbolizing Instruction " << std::hex << inst << std::dec << std::endl;
             if (it.second) {
                 uint64_t vaddr = getVaddressFromFileOffset(inst);
+
+                std::cerr << "vaddr : " << vaddr << endl ;
                 //Expected expect to be cheched before beeing moved-assigned
                 it.first->second = std::make_unique<llvm::Expected<llvm::DIInliningInfo>>
                             (symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr));
             }
+            if (*it.first->second.get())
+                Printer << (*it.first->second.get()).get();
             return *it.first->second.get();
         }
 
@@ -73,6 +78,7 @@ namespace autofdo {
                 }
                 llvm::object::Binary *bb = expected_file.get().getBinary();
                 if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
+                    llvm::errs() << "opened " << loc.objectFile;
                     it.first->second = std::make_unique<llvm::object::OwningBinary<llvm::object::Binary>>
                             (std::move(expected_file.get()));
                 }
@@ -91,7 +97,7 @@ namespace autofdo {
 
             return 0;
         }
-
+        llvm::symbolize::DIPrinter Printer;
         std::map<InstructionLocation, std::unique_ptr<Expected<DIInliningInfo>>> instructionMap;
         mutable std::map<std::string, std::shared_ptr<llvm::object::OwningBinary<llvm::object::Binary>>> objectFileCache;
         llvm::symbolize::LLVMSymbolizer::Options symbolizerOption;

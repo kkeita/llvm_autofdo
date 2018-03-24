@@ -19,6 +19,7 @@
 
 #include "symbol_map.h"
 
+extern llvm::cl::opt<bool> DebugDump ;
 namespace autofdo {
 using namespace std;
 class SymbolMap;

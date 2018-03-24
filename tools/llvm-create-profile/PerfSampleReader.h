@@ -83,11 +83,15 @@ namespace autofdo {
                 std::set<MemoryMapping> mappedAddressSpace;
                 std::string profile ;
             public:
-                PerfDataSampleReader(const std::string & profile) : profile(profile) {};
+                PerfDataSampleReader(const std::string & profile) :
+                        profile(profile), nbDropedBranch(0),nbDropedIP(0),nbDropedRange(0) {};
                 std::ostream &log = std::cerr;
                 std::map<Branch, uint64_t> branchCountMap;
                 std::map<Range, uint64_t> rangeCountMap;
                 std::map<InstructionLocation, uint64_t> ip_count_map;
+                uint64_t nbDropedBranch ;
+                uint64_t nbDropedIP ;
+                uint64_t nbDropedRange ;
             private:
 
                 std::optional<InstructionLocation> resolveAddress(uint64_t address) {
@@ -177,6 +181,7 @@ namespace autofdo {
                         uint64_t to = std::stoull((*it)[2], nullptr, 16);
                         ret.brstack.emplace_back(lbrElement{from, to});
                     }
+
                     return ret;
                 };
 
@@ -215,6 +220,7 @@ namespace autofdo {
                         if (auto resolved_ip = resolveAddress(event.value().ip)) {
                             ip_count_map[resolved_ip.value()] += 1;
                         } else {
+                            nbDropedIP+=1;
                             log << "on event : " << line << std::endl;
                             log << "dropping address count because could not resolve : "
                                 << event.value().ip << std::endl;
@@ -226,7 +232,8 @@ namespace autofdo {
                             lbr.push_back(std::make_pair(from, to));
                         }
 
-                        for (int i = 0; i < lbr.size() - 1; i++) {
+                        int i = 0;
+                        for (; i < lbr.size() - 1; i++) {
                             auto &from = lbr[i].first;
                             auto &to = lbr[i].second;
 
@@ -235,16 +242,43 @@ namespace autofdo {
                                 branchCountMap[br] += 1;
                                 log << "New LBR element : " << br << std::endl;
                             } else {
+                                nbDropedBranch+=1;
                                 log << "Dropping lbr element : " << event.value().brstack[i] << std::endl;
                             }
 
                             auto &next_from = lbr[i + 1].first;
                             if (to and next_from) {
-                                Range range{to.value(),next_from.value()};
-                                rangeCountMap[range] += 1;
-                                log << "New Range : " << range << std::endl;
+                                if ( (event.value().brstack[i].to  < event.value().brstack[i+1].from) and (event.value().brstack[i+1].from - event.value().brstack[i].to  < 3000) ){
+                                    if (to.value().objectFile == next_from.value().objectFile){
+                                    Range range{to.value(),next_from.value()};
+                                    rangeCountMap[range] += 1;
+                                    log << "New Range : " << range << std::endl;
+                                    }
+                                    else {
+                                        log << "dropping Range : " << Range{to.value(),next_from.value()} << "Miss match objetFiles" << std::endl;
+                                    }
+                                } else {
+                                    log << std::hex << "Dropping invalid range : begin = " << event.value().brstack[i].to
+                                    << ", end = "<< event.value().brstack[i+1].from << std::dec << std::endl;
+                                    nbDropedRange+=1;
+                                }
                             }
                         }
+
+                        //last lb element
+                        assert(i == lbr.size() -1 );
+                        auto &from = lbr[i].first;
+                        auto &to = lbr[i].second;
+
+                        if ((to) and (from)) {
+                            Branch br{from.value(),to.value()};
+                            branchCountMap[br] += 1;
+                            log << "New LBR element : " << br << std::endl;
+                        } else {
+                            log << "Dropping lbr element : " << event.value().brstack[i] << std::endl;
+                        }
+
+
                     } else {
                         log << "parsing failed " << std::endl;
                     }
@@ -282,6 +316,18 @@ namespace autofdo {
                     for (; !input.eof(); std::getline(input, line), count++) {
                         parseSingleLine(line);
                     };
+
+                    log << "Total number of Address parsed : " << ip_count_map.size() +  nbDropedIP
+                        << " dropped " << nbDropedIP;
+
+                    log << "Total number of branch parsed : " << branchCountMap.size() +  nbDropedBranch
+                        << " dropped " << nbDropedBranch;
+
+                    log << "Total number of range parsed : " << rangeCountMap.size() +  nbDropedRange
+                        << " dropped " << nbDropedRange;
+
+                    // uint64_t max_range = std::max(rangeCountMap.begin(),rangeCount.end().,[](const auto &pair) {  return (pair.first.end - pair.first.end) ;});
+
                     return true ;
                 };
 

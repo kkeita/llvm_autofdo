@@ -41,10 +41,8 @@ namespace autofdo {
             }
 
             bool operator<(const InstructionLocation &rhs) const {
-                assert(this->objectFile == rhs.objectFile);
-                return offset < rhs.offset;
+                return std::tie(offset, objectFile) < std::tie(rhs.offset, rhs.objectFile);
             }
-
 
             bool operator>(const InstructionLocation &rhs) const {
                 return rhs < *this;
@@ -100,7 +98,7 @@ namespace autofdo {
 
 struct Range {
     friend std::ostream &operator<<(std::ostream &os, const Range &range) {
-        os << "begin: " << range.begin << " end: " << range.end;
+        os << "begin: " << range.begin << " end: " << range.end << " length: " << range.end.offset - range.begin.offset;
         return os;
     }
             bool operator<(const Range &rhs) const {
