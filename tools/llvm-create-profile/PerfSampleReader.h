@@ -76,12 +76,14 @@ namespace autofdo {
  * */
 
 
-            class PerfDataSampleReader : AbstractSampleReader {
+            class PerfDataSampleReader : public AbstractSampleReader {
 
                 std::vector<Branch> brstack; //lbr content;
                 std::vector<Range> ranges;
                 std::set<MemoryMapping> mappedAddressSpace;
+                std::string profile ;
             public:
+                PerfDataSampleReader(const std::string & profile) : profile(profile) {};
                 std::ostream &log = std::cerr;
                 std::map<Branch, uint64_t> branchCountMap;
                 std::map<Range, uint64_t> rangeCountMap;
@@ -271,7 +273,9 @@ namespace autofdo {
 
             public:
 
-                bool readProfile(std::ifstream &input) override {
+
+                bool readProfile() override {
+                    std::ifstream input(profile);
                     std::string line;
                     log << std::hex;
                     int count = 0;
@@ -284,9 +288,8 @@ namespace autofdo {
             };
 
             static int main2() {
-                PerfDataSampleReader loader{};
-                std::ifstream samples("/home/kaderkeita/CLionProjects/perfdataParser/perf.txt");
-                loader.readProfile(samples);
+                PerfDataSampleReader loader("/home/kaderkeita/CLionProjects/perfdataParser/perf.txt");
+                loader.readProfile(  );
                 for (auto e : loader.rangeCountMap) {
                     loader.log << "Range : " << e.first << ", count = " << e.second << std::endl;
                 }

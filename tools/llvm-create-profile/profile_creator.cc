@@ -50,8 +50,8 @@ bool ProfileCreator::CreateProfile(const string &input_profile_name,
 bool ProfileCreator::ReadSample(const string &input_profile_name,
                                 const string &profiler) {
   if (profiler == "perf") {
-
-      llvm::errs() << "Unsupported profiler type: " << profiler;
+      sample_reader_ = new experimental::PerfDataSampleReader(input_profile_name);
+      //llvm::errs() << "Unsupported profiler type: " << profiler;
 
   } else if (profiler == "text") {
     sample_reader_ = new TextSampleReaderWriter(input_profile_name,this->binary_);

@@ -131,8 +131,6 @@ struct Range {
 using experimental::InstructionLocation;
 using experimental::Range;
     using experimental::Branch;
-// All counter type is using uint64_t instead of int64 because GCC's gcov
-// functions only takes unsigned variables.
 typedef map<InstructionLocation, uint64_t> AddressCountMap;
 typedef map<Range, uint64_t> RangeCountMap;
 typedef map<Branch, uint64_t> BranchCountMap;
