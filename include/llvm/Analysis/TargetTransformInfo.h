@@ -476,6 +476,10 @@ public:
   /// calculation for the instructions in a loop.
   bool canMacroFuseCmp() const;
 
+  /// \return True is LSR should make efforts to create/preserve post-inc
+  /// addressing mode expressions.
+  bool shouldFavorPostInc() const;
+
   /// \brief Return true if the target supports masked load/store
   /// AVX2 and AVX-512 targets allow masks for consecutive load and store
   bool isLegalMaskedStore(Type *DataType) const;
@@ -710,10 +714,20 @@ public:
   /// and the number of execution units in the CPU.
   unsigned getMaxInterleaveFactor(unsigned VF) const;
 
-  /// \return The expected cost of arithmetic ops, such as mul, xor, fsub, etc.
-  /// \p Args is an optional argument which holds the instruction operands  
-  /// values so the TTI can analyize those values searching for special 
-  /// cases\optimizations based on those values.
+  /// This is an approximation of reciprocal throughput of a math/logic op.
+  /// A higher cost indicates less expected throughput.
+  /// From Agner Fog's guides, reciprocal throughput is "the average number of
+  /// clock cycles per instruction when the instructions are not part of a
+  /// limiting dependency chain."
+  /// Therefore, costs should be scaled to account for multiple execution units
+  /// on the target that can process this type of instruction. For example, if
+  /// there are 5 scalar integer units and 2 vector integer units that can
+  /// calculate an 'add' in a single cycle, this model should indicate that the
+  /// cost of the vector add instruction is 2.5 times the cost of the scalar
+  /// add instruction.
+  /// \p Args is an optional argument which holds the instruction operands
+  /// values so the TTI can analyze those values searching for special
+  /// cases or optimizations based on those values.
   int getArithmeticInstrCost(
       unsigned Opcode, Type *Ty, OperandValueKind Opd1Info = OK_AnyValue,
       OperandValueKind Opd2Info = OK_AnyValue,
@@ -876,6 +890,21 @@ public:
   bool areInlineCompatible(const Function *Caller,
                            const Function *Callee) const;
 
+  /// \brief The type of load/store indexing.
+  enum MemIndexedMode {
+    MIM_Unindexed,  ///< No indexing.
+    MIM_PreInc,     ///< Pre-incrementing.
+    MIM_PreDec,     ///< Pre-decrementing.
+    MIM_PostInc,    ///< Post-incrementing.
+    MIM_PostDec     ///< Post-decrementing.
+  };
+
+  /// \returns True if the specified indexed load for the given type is legal.
+  bool isIndexedLoadLegal(enum MemIndexedMode Mode, Type *Ty) const;
+
+  /// \returns True if the specified indexed store for the given type is legal.
+  bool isIndexedStoreLegal(enum MemIndexedMode Mode, Type *Ty) const;
+
   /// \returns The bitwidth of the largest vector type that should be used to
   /// load/store in the given address space.
   unsigned getLoadStoreVecRegBitWidth(unsigned AddrSpace) const;
@@ -984,6 +1013,7 @@ public:
   virtual bool isLSRCostLess(TargetTransformInfo::LSRCost &C1,
                              TargetTransformInfo::LSRCost &C2) = 0;
   virtual bool canMacroFuseCmp() = 0;
+  virtual bool shouldFavorPostInc() const = 0;
   virtual bool isLegalMaskedStore(Type *DataType) = 0;
   virtual bool isLegalMaskedLoad(Type *DataType) = 0;
   virtual bool isLegalMaskedScatter(Type *DataType) = 0;
@@ -1099,6 +1129,8 @@ public:
       unsigned RemainingBytes, unsigned SrcAlign, unsigned DestAlign) const = 0;
   virtual bool areInlineCompatible(const Function *Caller,
                                    const Function *Callee) const = 0;
+  virtual bool isIndexedLoadLegal(MemIndexedMode Mode, Type *Ty) const = 0;
+  virtual bool isIndexedStoreLegal(MemIndexedMode Mode,Type *Ty) const = 0;
   virtual unsigned getLoadStoreVecRegBitWidth(unsigned AddrSpace) const = 0;
   virtual bool isLegalToVectorizeLoad(LoadInst *LI) const = 0;
   virtual bool isLegalToVectorizeStore(StoreInst *SI) const = 0;
@@ -1205,6 +1237,9 @@ public:
   }
   bool canMacroFuseCmp() override {
     return Impl.canMacroFuseCmp();
+  }
+  bool shouldFavorPostInc() const override {
+    return Impl.shouldFavorPostInc();
   }
   bool isLegalMaskedStore(Type *DataType) override {
     return Impl.isLegalMaskedStore(DataType);
@@ -1459,6 +1494,12 @@ public:
   bool areInlineCompatible(const Function *Caller,
                            const Function *Callee) const override {
     return Impl.areInlineCompatible(Caller, Callee);
+  }
+  bool isIndexedLoadLegal(MemIndexedMode Mode, Type *Ty) const override {
+    return Impl.isIndexedLoadLegal(Mode, Ty, getDataLayout());
+  }
+  bool isIndexedStoreLegal(MemIndexedMode Mode, Type *Ty) const override {
+    return Impl.isIndexedStoreLegal(Mode, Ty, getDataLayout());
   }
   unsigned getLoadStoreVecRegBitWidth(unsigned AddrSpace) const override {
     return Impl.getLoadStoreVecRegBitWidth(AddrSpace);

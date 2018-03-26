@@ -23,9 +23,9 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
-#include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
+#include "llvm/IR/ValueTypes.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -105,7 +105,7 @@ BPFTargetLowering::BPFTargetLowering(const TargetMachine &TM,
   }
 
   if (STI.getHasAlu32()) {
-    setOperationAction(ISD::BSWAP, MVT::i32, Expand);
+    setOperationAction(ISD::BSWAP, MVT::i32, Promote);
     setOperationAction(ISD::BR_CC, MVT::i32, Promote);
   }
 

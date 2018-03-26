@@ -42,6 +42,9 @@ public:
                   const IPDBSourceFile &File) const override;
   std::unique_ptr<IPDBEnumLineNumbers>
   findLineNumbersByAddress(uint64_t Address, uint32_t Length) const override;
+  std::unique_ptr<IPDBEnumLineNumbers>
+  findLineNumbersBySectOffset(uint32_t Section, uint32_t Offset,
+                              uint32_t Length) const override;
 
   std::unique_ptr<IPDBEnumSourceFiles>
   findSourceFiles(const PDBSymbolCompiland *Compiland, llvm::StringRef Pattern,
@@ -65,6 +68,11 @@ public:
   std::unique_ptr<IPDBEnumDataStreams> getDebugStreams() const override;
 
   std::unique_ptr<IPDBEnumTables> getEnumTables() const override;
+
+  std::unique_ptr<IPDBEnumInjectedSources> getInjectedSources() const override;
+
+  std::unique_ptr<IPDBEnumSectionContribs> getSectionContribs() const override;
+
 private:
   CComPtr<IDiaSession> Session;
 };

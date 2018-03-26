@@ -15,7 +15,6 @@
 
 #include "Analyze.h"
 #include "BytesOutputStyle.h"
-#include "Diff.h"
 #include "DumpOutputStyle.h"
 #include "InputFile.h"
 #include "LinePrinter.h"
@@ -45,6 +44,7 @@
 #include "llvm/DebugInfo/MSF/MSFBuilder.h"
 #include "llvm/DebugInfo/PDB/GenericError.h"
 #include "llvm/DebugInfo/PDB/IPDBEnumChildren.h"
+#include "llvm/DebugInfo/PDB/IPDBInjectedSource.h"
 #include "llvm/DebugInfo/PDB/IPDBRawSymbol.h"
 #include "llvm/DebugInfo/PDB/IPDBSession.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
@@ -97,8 +97,6 @@ cl::SubCommand
     PrettySubcommand("pretty",
                      "Dump semantic information about types and symbols");
 
-cl::SubCommand DiffSubcommand("diff", "Diff the contents of 2 PDB files");
-
 cl::SubCommand
     YamlToPdbSubcommand("yaml2pdb",
                         "Generate a PDB file from a YAML description");
@@ -146,6 +144,14 @@ namespace pretty {
 cl::list<std::string> InputFilenames(cl::Positional,
                                      cl::desc("<input PDB files>"),
                                      cl::OneOrMore, cl::sub(PrettySubcommand));
+
+cl::opt<bool> InjectedSources("injected-sources",
+                              cl::desc("Display injected sources"),
+                              cl::cat(OtherOptions), cl::sub(PrettySubcommand));
+cl::opt<bool> ShowInjectedSourceContent(
+    "injected-source-content",
+    cl::desc("When displaying an injected source, display the file content"),
+    cl::cat(OtherOptions), cl::sub(PrettySubcommand));
 
 cl::opt<bool> Compilands("compilands", cl::desc("Display compilands"),
                          cl::cat(TypeCategory), cl::sub(PrettySubcommand));
@@ -284,44 +290,6 @@ cl::opt<bool>
 cl::opt<bool> NoEnumDefs("no-enum-definitions",
                          cl::desc("Don't display full enum definitions"),
                          cl::cat(FilterCategory), cl::sub(PrettySubcommand));
-}
-
-namespace diff {
-cl::opt<bool> PrintValueColumns(
-    "values", cl::init(true),
-    cl::desc("Print one column for each PDB with the field value"),
-    cl::Optional, cl::sub(DiffSubcommand));
-cl::opt<bool>
-    PrintResultColumn("result", cl::init(false),
-                      cl::desc("Print a column with the result status"),
-                      cl::Optional, cl::sub(DiffSubcommand));
-
-cl::list<std::string>
-    RawModiEquivalences("modi-equivalence", cl::ZeroOrMore,
-                        cl::value_desc("left,right"),
-                        cl::desc("Modules with the specified indices will be "
-                                 "treated as referring to the same module"),
-                        cl::sub(DiffSubcommand));
-
-cl::opt<std::string> LeftRoot(
-    "left-bin-root", cl::Optional,
-    cl::desc("Treats the specified path as the root of the tree containing "
-             "binaries referenced by the left PDB.  The root is stripped from "
-             "embedded paths when doing equality comparisons."),
-    cl::sub(DiffSubcommand));
-cl::opt<std::string> RightRoot(
-    "right-bin-root", cl::Optional,
-    cl::desc("Treats the specified path as the root of the tree containing "
-             "binaries referenced by the right PDB.  The root is stripped from "
-             "embedded paths when doing equality comparisons"),
-    cl::sub(DiffSubcommand));
-
-cl::opt<std::string> Left(cl::Positional, cl::desc("<left>"),
-                          cl::sub(DiffSubcommand));
-cl::opt<std::string> Right(cl::Positional, cl::desc("<right>"),
-                           cl::sub(DiffSubcommand));
-
-llvm::DenseMap<uint32_t, uint32_t> Equivalences;
 }
 
 cl::OptionCategory FileOptions("Module & File Options");
@@ -525,8 +493,16 @@ cl::opt<bool> JustMyCode("jmc", cl::Optional,
                          cl::cat(FileOptions), cl::sub(DumpSubcommand));
 
 // MISCELLANEOUS OPTIONS
+cl::opt<bool> DumpNamedStreams("named-streams",
+                               cl::desc("dump PDB named stream table"),
+                               cl::cat(MiscOptions), cl::sub(DumpSubcommand));
+
 cl::opt<bool> DumpStringTable("string-table", cl::desc("dump PDB String Table"),
                               cl::cat(MiscOptions), cl::sub(DumpSubcommand));
+cl::opt<bool> DumpStringTableDetails("string-table-details",
+                                     cl::desc("dump PDB String Table Details"),
+                                     cl::cat(MiscOptions),
+                                     cl::sub(DumpSubcommand));
 
 cl::opt<bool> DumpSectionContribs("section-contribs",
                                   cl::desc("dump section contributions"),
@@ -785,18 +761,6 @@ static void dumpAnalysis(StringRef Path) {
   ExitOnErr(O->dump());
 }
 
-static void diff(StringRef Path1, StringRef Path2) {
-  std::unique_ptr<IPDBSession> Session1;
-  std::unique_ptr<IPDBSession> Session2;
-
-  auto &File1 = loadPDB(Path1, Session1);
-  auto &File2 = loadPDB(Path2, Session2);
-
-  auto O = llvm::make_unique<DiffStyle>(File1, File2);
-
-  ExitOnErr(O->dump());
-}
-
 bool opts::pretty::shouldDumpSymLevel(SymLevel Search) {
   if (SymTypes.empty())
     return true;
@@ -838,6 +802,62 @@ bool opts::pretty::compareDataSymbols(
   // Note that we intentionally sort in descending order on length, since
   // large types are more interesting than short ones.
   return getTypeLength(*F1) > getTypeLength(*F2);
+}
+
+static std::string stringOr(std::string Str, std::string IfEmpty) {
+  return (Str.empty()) ? IfEmpty : Str;
+}
+
+static void dumpInjectedSources(LinePrinter &Printer, IPDBSession &Session) {
+  auto Sources = Session.getInjectedSources();
+  if (0 == Sources->getChildCount()) {
+    Printer.printLine("There are no injected sources.");
+    return;
+  }
+
+  while (auto IS = Sources->getNext()) {
+    Printer.NewLine();
+    std::string File = stringOr(IS->getFileName(), "<null>");
+    uint64_t Size = IS->getCodeByteSize();
+    std::string Obj = stringOr(IS->getObjectFileName(), "<null>");
+    std::string VFName = stringOr(IS->getVirtualFileName(), "<null>");
+    uint32_t CRC = IS->getCrc32();
+
+    std::string CompressionStr;
+    llvm::raw_string_ostream Stream(CompressionStr);
+    Stream << IS->getCompression();
+    WithColor(Printer, PDB_ColorItem::Path).get() << File;
+    Printer << " (";
+    WithColor(Printer, PDB_ColorItem::LiteralValue).get() << Size;
+    Printer << " bytes): ";
+    WithColor(Printer, PDB_ColorItem::Keyword).get() << "obj";
+    Printer << "=";
+    WithColor(Printer, PDB_ColorItem::Path).get() << Obj;
+    Printer << ", ";
+    WithColor(Printer, PDB_ColorItem::Keyword).get() << "vname";
+    Printer << "=";
+    WithColor(Printer, PDB_ColorItem::Path).get() << VFName;
+    Printer << ", ";
+    WithColor(Printer, PDB_ColorItem::Keyword).get() << "crc";
+    Printer << "=";
+    WithColor(Printer, PDB_ColorItem::LiteralValue).get() << CRC;
+    Printer << ", ";
+    WithColor(Printer, PDB_ColorItem::Keyword).get() << "compression";
+    Printer << "=";
+    WithColor(Printer, PDB_ColorItem::LiteralValue).get() << Stream.str();
+
+    if (!opts::pretty::ShowInjectedSourceContent)
+      continue;
+
+    // Set the indent level to 0 when printing file content.
+    int Indent = Printer.getIndentLevel();
+    Printer.Unindent(Indent);
+
+    Printer.printLine(IS->getCode());
+
+    // Re-indent back to the original level.
+    Printer.Indent(Indent);
+  }
 }
 
 static void dumpPretty(StringRef Path) {
@@ -989,6 +1009,19 @@ static void dumpPretty(StringRef Path) {
   if (opts::pretty::Lines) {
     Printer.NewLine();
   }
+  if (opts::pretty::InjectedSources) {
+    Printer.NewLine();
+    WithColor(Printer, PDB_ColorItem::SectionHeader).get()
+        << "---INJECTED SOURCES---";
+    AutoIndent Indent1(Printer);
+
+    if (ReaderType == PDB_ReaderType::Native)
+      Printer.printLine(
+          "Injected sources are not supported with the native reader.");
+    else
+      dumpInjectedSources(Printer, *Session);
+  }
+
   outs().flush();
 }
 
@@ -1121,6 +1154,7 @@ int main(int argc_, const char *argv_[]) {
       opts::dump::DumpStreams = true;
       opts::dump::DumpStreamBlocks = true;
       opts::dump::DumpStringTable = true;
+      opts::dump::DumpStringTableDetails = true;
       opts::dump::DumpSummary = true;
       opts::dump::DumpSymbols = true;
       opts::dump::DumpSymbolStats = true;
@@ -1153,11 +1187,6 @@ int main(int argc_, const char *argv_[]) {
 
     if (opts::pdb2yaml::DumpModules)
       opts::pdb2yaml::DbiStream = true;
-  }
-  if (opts::DiffSubcommand) {
-    if (!opts::diff::PrintResultColumn && !opts::diff::PrintValueColumns) {
-      llvm::errs() << "WARNING: No diff columns specified\n";
-    }
   }
 
   llvm::sys::InitializeCOMRAII COM(llvm::sys::COMThreadingMode::MultiThreaded);
@@ -1213,21 +1242,6 @@ int main(int argc_, const char *argv_[]) {
     llvm::for_each(opts::dump::InputFilenames, dumpRaw);
   } else if (opts::BytesSubcommand) {
     llvm::for_each(opts::bytes::InputFilenames, dumpBytes);
-  } else if (opts::DiffSubcommand) {
-    for (StringRef S : opts::diff::RawModiEquivalences) {
-      StringRef Left;
-      StringRef Right;
-      std::tie(Left, Right) = S.split(',');
-      uint32_t X, Y;
-      if (!to_integer(Left, X) || !to_integer(Right, Y)) {
-        errs() << formatv("invalid value {0} specified for modi equivalence\n",
-                          S);
-        exit(1);
-      }
-      opts::diff::Equivalences[X] = Y;
-    }
-
-    diff(opts::diff::Left, opts::diff::Right);
   } else if (opts::MergeSubcommand) {
     if (opts::merge::InputFilenames.size() < 2) {
       errs() << "merge subcommand requires at least 2 input files.\n";

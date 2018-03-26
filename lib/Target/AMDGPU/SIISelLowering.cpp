@@ -49,12 +49,10 @@
 #include "llvm/CodeGen/MachineModuleInfo.h"
 #include "llvm/CodeGen/MachineOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/MachineValueType.h"
 #include "llvm/CodeGen/SelectionDAG.h"
 #include "llvm/CodeGen/SelectionDAGNodes.h"
 #include "llvm/CodeGen/TargetCallingConv.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
-#include "llvm/CodeGen/ValueTypes.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugLoc.h"
@@ -67,12 +65,14 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/ValueTypes.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/KnownBits.h"
+#include "llvm/Support/MachineValueType.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Target/TargetOptions.h"
 #include <cassert>
@@ -92,6 +92,11 @@ STATISTIC(NumTailCalls, "Number of tail calls");
 static cl::opt<bool> EnableVGPRIndexMode(
   "amdgpu-vgpr-index-mode",
   cl::desc("Use GPR indexing mode instead of movrel for vector indexing"),
+  cl::init(false));
+
+static cl::opt<bool> EnableDS128(
+  "amdgpu-ds128",
+  cl::desc("Use DS_read/write_b128"),
   cl::init(false));
 
 static cl::opt<unsigned> AssumeFrameIndexHighZeroBits(
@@ -5425,14 +5430,13 @@ SDValue SITargetLowering::LowerLOAD(SDValue Op, SelectionDAG &DAG) const {
       llvm_unreachable("unsupported private_element_size");
     }
   } else if (AS == AMDGPUASI.LOCAL_ADDRESS) {
-    if (NumElements > 2)
-      return SplitVectorLoad(Op, DAG);
-
-    if (NumElements == 2)
+    // Use ds_read_b128 if possible.
+    if (Subtarget->useDS128(EnableDS128) && Load->getAlignment() >= 16 &&
+        MemVT.getStoreSize() == 16)
       return SDValue();
 
-    // If properly aligned, if we split we might be able to use ds_read_b64.
-    return SplitVectorLoad(Op, DAG);
+    if (NumElements > 2)
+      return SplitVectorLoad(Op, DAG);
   }
   return SDValue();
 }
@@ -5829,14 +5833,14 @@ SDValue SITargetLowering::LowerSTORE(SDValue Op, SelectionDAG &DAG) const {
       llvm_unreachable("unsupported private_element_size");
     }
   } else if (AS == AMDGPUASI.LOCAL_ADDRESS) {
+    // Use ds_write_b128 if possible.
+    if (Subtarget->useDS128(EnableDS128) && Store->getAlignment() >= 16 &&
+        VT.getStoreSize() == 16)
+      return SDValue();
+
     if (NumElements > 2)
       return SplitVectorStore(Op, DAG);
-
-    if (NumElements == 2)
-      return Op;
-
-    // If properly aligned, if we split we might be able to use ds_write_b64.
-    return SplitVectorStore(Op, DAG);
+    return SDValue();
   } else {
     llvm_unreachable("unhandled address space");
   }
