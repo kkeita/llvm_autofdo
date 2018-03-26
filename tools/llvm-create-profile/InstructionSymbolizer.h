@@ -47,8 +47,8 @@ namespace autofdo {
 
                 std::cerr << "vaddr : " << vaddr << endl ;
                 //Expected expect to be cheched before beeing moved-assigned
-                it.first->second = std::make_unique<llvm::Expected<llvm::DIInliningInfo>>
-                            (symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr));
+                it.first->second = std::unique_ptr<llvm::Expected<llvm::DIInliningInfo>>
+                        (new llvm::Expected<llvm::DIInliningInfo>{std::move(symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr))});
             }
             if (*it.first->second.get())
                 Printer << (*it.first->second.get()).get();
@@ -79,8 +79,8 @@ namespace autofdo {
                 llvm::object::Binary *bb = expected_file.get().getBinary();
                 if (llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(bb)) {
                     llvm::errs() << "opened " << loc.objectFile;
-                    it.first->second = std::make_unique<llvm::object::OwningBinary<llvm::object::Binary>>
-                            (std::move(expected_file.get()));
+                    it.first->second = std::unique_ptr<llvm::object::OwningBinary<llvm::object::Binary>>
+                            {new llvm::object::OwningBinary<llvm::object::Binary>{std::move(expected_file.get())}};
                 }
             }
 

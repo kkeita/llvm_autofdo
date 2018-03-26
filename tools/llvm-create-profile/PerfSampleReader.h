@@ -7,13 +7,14 @@
 #include <map>
 #include<regex>
 #include "assert.h"
-#include <optional>
+//#include <optional>
 #include "sample_reader.h"
+#include "llvm/ADT/Optional.h"
 
 #pragma once
 namespace autofdo {
     namespace experimental {
-
+        using llvm::Optional ;
         struct MemoryMapping {
             std::string objectFile;
             uint64_t length;
@@ -94,9 +95,9 @@ namespace autofdo {
                 uint64_t nbDropedRange ;
             private:
 
-                std::optional<InstructionLocation> resolveAddress(uint64_t address) {
+                Optional<InstructionLocation> resolveAddress(uint64_t address) {
                     auto mapping = std::lower_bound(mappedAddressSpace.begin(), mappedAddressSpace.end(), address,
-                                                    [&address](const auto &mapped, uint64_t addr) {
+                                                    [&address](const MemoryMapping &mapped, uint64_t addr) {
                                                         return mapped.startAddress < addr;
                                                     });
 
@@ -104,23 +105,23 @@ namespace autofdo {
 
                     if (mapping == mappedAddressSpace.begin()) {
                         log << "absolute address : " << address << ", could not be resolved " << std::endl;
-                        return std::optional < InstructionLocation > {};
+                        return Optional < InstructionLocation > {};
                     }
                     mapping--;
                     if (address > ((mapping)->startAddress + (mapping)->length)) {
                         log << "absolute address : " << address << ", could not be resolved " << std::endl;
-                        return std::optional < InstructionLocation > {};
+                        return Optional < InstructionLocation > {};
                     }
 
                     {
                         auto offset =  (address - mapping->startAddress) + mapping->offset;
                         InstructionLocation ret{mapping->objectFile,offset};
                         log << "absolute address : " << address << ", resolved to " << ret << std::endl;
-                        return std::make_optional(ret);
+                        return ret;
                     };
                 };
 
-                std::optional<MemoryMapping> parseMMAP2(const std::string &line) {
+                Optional<MemoryMapping> parseMMAP2(const std::string &line) {
                     //PERF_RECORD_MMAP2 16781/16781: [0x563f9f223000(0x237000) @ 0 08:06 38535520 522742584]: r-xp /usr/bin/find
                     std::string mmap2 = "PERF_RECORD_MMAP2 .*: \\[(.*)\\((.*)\\) @ (\\S*) .*\\]: .* (\\/.*)";
                     std::regex reg(mmap2, std::regex_constants::ECMAScript);
@@ -128,33 +129,33 @@ namespace autofdo {
                     bool matched = std::regex_match(line, results, reg);
 
                     if (!matched)
-                        return std::optional < MemoryMapping > {};
+                        return Optional < MemoryMapping > {};
                     if (matched) {
                         uint64_t loadAddress = std::stoull(results[1], nullptr, 16);
                         uint64_t length = std::stoull(results[2], nullptr, 16);
                         uint64_t offset = std::stoull(results[3], nullptr, 16);
                         std::string objectFile(results[4]);
-                        return std::make_optional<MemoryMapping>(MemoryMapping{objectFile, length, loadAddress, offset});
+                        return MemoryMapping{objectFile, length, loadAddress, offset};
                     }
                 };
 
-                std::optional<MemoryMapping> parseMMAP(const std::string &line) {
+                Optional<MemoryMapping> parseMMAP(const std::string &line) {
                     std::string mmap = "PERF_RECORD_MMAP .*: \\[(.*)\\((.*)\\) @ (\\S*).*\\]: .* (\\/.*)";
                     std::regex reg(mmap, std::regex_constants::ECMAScript);
                     std::smatch results;
                     bool matched = std::regex_match(line, results, reg);
                     if (!matched)
-                        return std::optional < MemoryMapping > {};
+                        return Optional < MemoryMapping > {};
                     uint64_t loadAddress = std::stoull(results[1], nullptr, 16);
                     uint64_t length = std::stoull(results[2], nullptr, 16);
                     uint64_t offset = std::stoull(results[3], nullptr, 16);
                     std::string objectFile(results[4]);
-                    return std::make_optional<MemoryMapping>(MemoryMapping{objectFile, length, loadAddress, offset});
+                    return MemoryMapping{objectFile, length, loadAddress, offset};
 
 
                 };
 
-                std::optional<perfEvent> parsePerfEvent(const std::string &line) {
+                Optional<perfEvent> parsePerfEvent(const std::string &line) {
                     //log << "event parsing" << std::endl;
                     std::string event = "\\"
                             "s+([a-f0-9]+) (((0x[a-f0-9]*)\\/(0x[a-f0-9]*)\\/([P M])\\/([P \\-])\\/([P \\-])\\/([a-f0-9]*)\\s*)+)";
@@ -164,7 +165,7 @@ namespace autofdo {
                     std::smatch results, results2;
                     bool matched = std::regex_match(line, results, reg);
                     if (!matched)
-                        return std::optional < perfEvent > {};
+                        return Optional < perfEvent > {};
                     //log << "Matched" << std::endl ;
                     perfEvent ret;
                     ret.ip = std::stoull(std::string(results[1]), nullptr, 16);
@@ -191,7 +192,7 @@ namespace autofdo {
                     //TODO: use find_first of for abetter error message
                     auto conflict = std::any_of(mappedAddressSpace.begin(),
                                                 mappedAddressSpace.end(),
-                                                [&memoryMap](auto &mapping) {
+                                                [&memoryMap](const MemoryMapping &mapping) {
                                                     return MemoryMapping::intersects(mapping, memoryMap);
                                                 });
                     if (conflict) {
@@ -212,21 +213,21 @@ namespace autofdo {
 
                 void parseSingleLine(const std::string &line) {
                     log << "parsing line1 : " << line << std::endl;
-                    if (std::optional<MemoryMapping> memoryMap = parseMMAP2(line)) {
-                        mappedAddressSpace.insert(memoryMap.value());
+                    if (Optional<MemoryMapping> memoryMap = parseMMAP2(line)) {
+                        mappedAddressSpace.insert(memoryMap.getValue());
                     } else if (auto memoryMap = parseMMAP(line)) {
-                        mappedAddressSpace.insert(memoryMap.value());
+                        mappedAddressSpace.insert(memoryMap.getValue());
                     } else if (auto event = parsePerfEvent(line)) {
-                        if (auto resolved_ip = resolveAddress(event.value().ip)) {
-                            ip_count_map[resolved_ip.value()] += 1;
+                        if (auto resolved_ip = resolveAddress(event.getValue().ip)) {
+                            ip_count_map[resolved_ip.getValue()] += 1;
                         } else {
                             nbDropedIP+=1;
                             log << "on event : " << line << std::endl;
                             log << "dropping address count because could not resolve : "
-                                << event.value().ip << std::endl;
+                                << event.getValue().ip << std::endl;
                         }
-                        std::vector<std::pair<std::optional<InstructionLocation>, std::optional<InstructionLocation>>> lbr;
-                        for (const auto &e : event.value().brstack) {
+                        std::vector<std::pair<Optional<InstructionLocation>, Optional<InstructionLocation>>> lbr;
+                        for (const auto &e : event.getValue().brstack) {
                             auto from = resolveAddress(e.from);
                             auto to = resolveAddress(e.to);
                             lbr.push_back(std::make_pair(from, to));
@@ -238,28 +239,28 @@ namespace autofdo {
                             auto &to = lbr[i].second;
 
                             if ((to) and (from)) {
-                                Branch br{from.value(),to.value()};
+                                Branch br{from.getValue(),to.getValue()};
                                 branchCountMap[br] += 1;
                                 log << "New LBR element : " << br << std::endl;
                             } else {
                                 nbDropedBranch+=1;
-                                log << "Dropping lbr element : " << event.value().brstack[i] << std::endl;
+                                log << "Dropping lbr element : " << event.getValue().brstack[i] << std::endl;
                             }
 
                             auto &next_from = lbr[i + 1].first;
                             if (to and next_from) {
-                                if ( (event.value().brstack[i].to  < event.value().brstack[i+1].from) and (event.value().brstack[i+1].from - event.value().brstack[i].to  < 3000) ){
-                                    if (to.value().objectFile == next_from.value().objectFile){
-                                    Range range{to.value(),next_from.value()};
+                                if ( (event.getValue().brstack[i].to  < event.getValue().brstack[i+1].from) and (event.getValue().brstack[i+1].from - event.getValue().brstack[i].to  < 3000) ){
+                                    if (to.getValue().objectFile == next_from.getValue().objectFile){
+                                    Range range{to.getValue(),next_from.getValue()};
                                     rangeCountMap[range] += 1;
                                     log << "New Range : " << range << std::endl;
                                     }
                                     else {
-                                        log << "dropping Range : " << Range{to.value(),next_from.value()} << "Miss match objetFiles" << std::endl;
+                                        log << "dropping Range : " << Range{to.getValue(),next_from.getValue()} << "Miss match objetFiles" << std::endl;
                                     }
                                 } else {
-                                    log << std::hex << "Dropping invalid range : begin = " << event.value().brstack[i].to
-                                    << ", end = "<< event.value().brstack[i+1].from << std::dec << std::endl;
+                                    log << std::hex << "Dropping invalid range : begin = " << event.getValue().brstack[i].to
+                                    << ", end = "<< event.getValue().brstack[i+1].from << std::dec << std::endl;
                                     nbDropedRange+=1;
                                 }
                             }
@@ -271,11 +272,11 @@ namespace autofdo {
                         auto &to = lbr[i].second;
 
                         if ((to) and (from)) {
-                            Branch br{from.value(),to.value()};
+                            Branch br{from.getValue(),to.getValue()};
                             branchCountMap[br] += 1;
                             log << "New LBR element : " << br << std::endl;
                         } else {
-                            log << "Dropping lbr element : " << event.value().brstack[i] << std::endl;
+                            log << "Dropping lbr element : " << event.getValue().brstack[i] << std::endl;
                         }
 
 
