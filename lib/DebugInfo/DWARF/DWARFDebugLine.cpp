@@ -883,7 +883,6 @@ DWARFDebugLine::LineTable::findRowInSeq(const DWARFDebugLine::Sequence &Seq,
 uint32_t DWARFDebugLine::LineTable::lookupAddress(uint64_t Address) const {
   if (Sequences.empty())
     return UnknownRowIndex;
-    std::cerr << __FUNCTION__ << std::endl;
   // First, find an instruction sequence containing the given address.
   DWARFDebugLine::Sequence Sequence;
   Sequence.LowPC = Address;
