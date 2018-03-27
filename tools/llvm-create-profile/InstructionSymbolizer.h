@@ -12,7 +12,7 @@
 #include "llvm/Object/ELFObjectFile.h"
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/DebugInfo/Symbolize/DIPrinter.h"
-
+#define  DEBUG(x) {};
 namespace autofdo {
     using llvm::DIInliningInfo;
     using llvm::DILineInfo;
@@ -41,17 +41,17 @@ namespace autofdo {
 
         Expected<DIInliningInfo> &symbolizeInstruction(const InstructionLocation &inst) {
             auto it = instructionMap.insert(decltype(instructionMap)::value_type{inst, nullptr});
-            std::cerr << "Symbolizing Instruction " << std::hex << inst << std::dec << std::endl;
+            DEBUG(std::cerr << "Symbolizing Instruction " << std::hex << inst << std::dec << std::endl);
             if (it.second) {
                 uint64_t vaddr = getVaddressFromFileOffset(inst);
 
-                std::cerr << "vaddr : " << vaddr << endl ;
+                DEBUG(std::cerr << "vaddr : " << vaddr << endl) ;
                 //Expected expect to be cheched before beeing moved-assigned
                 it.first->second = std::unique_ptr<llvm::Expected<llvm::DIInliningInfo>>
                         (new llvm::Expected<llvm::DIInliningInfo>{std::move(symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr))});
             }
             if (*it.first->second.get())
-                Printer << (*it.first->second.get()).get();
+                DEBUG(Printer << (*it.first->second.get()).get());
             return *it.first->second.get();
         }
 
