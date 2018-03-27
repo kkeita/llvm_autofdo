@@ -25,9 +25,6 @@
 #include <cstdio>
 #include <utility>
 
-
-#include <iostream>
-#include <set>
 using namespace llvm;
 using namespace dwarf;
 
