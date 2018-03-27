@@ -537,6 +537,56 @@ operator<<(RemarkT &&R,
   return R;
 }
 
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
+               DiagnosticInfoOptimizationBase::Argument>::type A) {
+  R.insert(A);
+  return R;
+}
+
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &&R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
+               DiagnosticInfoOptimizationBase::Argument>::type A) {
+  R.insert(A);
+  return R;
+}
+
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
+               DiagnosticInfoOptimizationBase::setIsVerbose>::type V) {
+  R.insert(V);
+  return R;
+}
+
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &&R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
+               DiagnosticInfoOptimizationBase::setIsVerbose>::type V) {
+  R.insert(V);
+  return R;
+}
+
+template <class RemarkT>
+RemarkT &
+operator<<(RemarkT &R,
+           typename std::enable_if<
+               std::is_base_of<DiagnosticInfoOptimizationBase, RemarkT>::value,
+               DiagnosticInfoOptimizationBase::setExtraArgs>::type EA) {
+  R.insert(EA);
+  return R;
+}
+
 /// \brief Common features for diagnostics dealing with optimization remarks
 /// that are used by IR passes.
 class DiagnosticInfoIROptimization : public DiagnosticInfoOptimizationBase {
