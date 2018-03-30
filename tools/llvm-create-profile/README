@@ -1,2 +1,19 @@
 create_llvm_prof replacement using llvm-symbolizer and llvm-readelf as replacement for the external dependencies.
 This is meant to be a dropped in replacement.
+
+
+Main source code difference :
+
+
+Main visible difference with create_llvm_prof:
+
+1 - We only symbolize address with sample count, which manifest as not having lines with zero count in the profile.
+2 - Because the llvm-symbolizer library is able to find more linkage name than addr2line, we see more target branch name and
+    more function name are manglenamed
+3 - There is no longer a hard minimum limit of 10 sample on which functions should be included in the profile. The --threshold 
+    flags is the only limit applied. 
+4 - Only supports ELF64 for now
+5 - Preliminary support for .so : 
+    - new perfparser for parsing "perf script -F ip,brstack" outputs 
+    - added support for multiple .text regions ( Sample address are now converted in {objectFile,ObjectOffset} pairs)
+    
