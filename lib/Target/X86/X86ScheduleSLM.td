@@ -90,7 +90,8 @@ def : InstRW<[WriteMove], (instrs COPY)>;
 defm : SLMWriteResPair<WriteALU,   [SLM_IEC_RSV01], 1>;
 defm : SLMWriteResPair<WriteIMul,  [SLM_IEC_RSV1],  3>;
 defm : SLMWriteResPair<WriteShift, [SLM_IEC_RSV0],  1>;
-defm : SLMWriteResPair<WriteJump,  [SLM_IEC_RSV1],   1>;
+defm : SLMWriteResPair<WriteJump,  [SLM_IEC_RSV1],  1>;
+defm : SLMWriteResPair<WriteCRC32, [SLM_IEC_RSV1],  3>;
 
 // This is for simple LEAs with one or two input operands.
 // The complex ones can only execute on port 1, and they require two cycles on
@@ -102,6 +103,11 @@ defm : SLMWriteResPair<WriteBitScan, [SLM_IEC_RSV01], 10, [20], 10>;
 defm : SLMWriteResPair<WriteLZCNT,   [SLM_IEC_RSV0], 3>;
 defm : SLMWriteResPair<WriteTZCNT,   [SLM_IEC_RSV0], 3>;
 defm : SLMWriteResPair<WritePOPCNT,  [SLM_IEC_RSV0], 3>;
+
+// BMI1 BEXTR, BMI2 BZHI
+// NOTE: These don't exist on Silvermont. Ports are guesses.
+defm : SBWriteResPair<WriteBEXTR, [SLM_IEC_RSV0], 1>;
+defm : SBWriteResPair<WriteBZHI, [SLM_IEC_RSV0], 1>;
 
 // This is quite rough, latency depends on the dividend.
 defm : SLMWriteResPair<WriteIDiv, [SLM_IEC_RSV01, SLMDivider], 25, [1,25], 1, 4>;
@@ -132,6 +138,7 @@ defm : SLMWriteResPair<WriteVecShift, [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteVecLogic, [SLM_FPC_RSV01], 1>;
 defm : SLMWriteResPair<WriteVecALU,   [SLM_FPC_RSV01],  1>;
 defm : SLMWriteResPair<WriteVecIMul,  [SLM_FPC_RSV0],   4>;
+defm : SLMWriteResPair<WritePMULLD,  [SLM_FPC_RSV0],   11, [11], 7>;
 defm : SLMWriteResPair<WriteShuffle,  [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteBlend,  [SLM_FPC_RSV0],  1>;
 defm : SLMWriteResPair<WriteMPSAD,  [SLM_FPC_RSV0],  7>;
@@ -183,6 +190,11 @@ def : WriteRes<WritePCmpEStrILd, [SLM_FPC_RSV0, SLM_MEC_RSV]> {
   let Latency = 21;
   let ResourceCycles = [21, 1];
 }
+
+// MOVMSK Instructions.
+def : WriteRes<WriteFMOVMSK, [SLM_FPC_RSV1]> { let Latency = 4; }
+def : WriteRes<WriteVecMOVMSK, [SLM_FPC_RSV1]> { let Latency = 4; }
+def : WriteRes<WriteMMXMOVMSK, [SLM_FPC_RSV1]> { let Latency = 4; }
 
 // AES Instructions.
 def : WriteRes<WriteAESDecEnc, [SLM_FPC_RSV0]> {

@@ -106,6 +106,7 @@ def  : WriteRes<WriteIMulH, []> { let Latency = 3; }
 
 defm : SBWriteResPair<WriteShift, [SBPort05],  1>;
 defm : SBWriteResPair<WriteJump,  [SBPort5],   1>;
+defm : SBWriteResPair<WriteCRC32, [SBPort1],   3, [1], 1, 5>;
 
 // This is for simple LEAs with one or two input operands.
 // The complex ones can only execute on port 1, and they require two cycles on
@@ -117,6 +118,11 @@ defm : SBWriteResPair<WriteBitScan, [SBPort1], 3, [1], 1, 5>;
 defm : SBWriteResPair<WriteLZCNT,   [SBPort1], 3, [1], 1, 5>;
 defm : SBWriteResPair<WriteTZCNT,   [SBPort1], 3, [1], 1, 5>;
 defm : SBWriteResPair<WritePOPCNT,  [SBPort1], 3, [1], 1, 5>;
+
+// BMI1 BEXTR, BMI2 BZHI
+// NOTE: These don't exist on Sandy Bridge. Ports are guesses.
+defm : SBWriteResPair<WriteBEXTR, [SBPort05,SBPort1], 2, [1,1], 2>;
+defm : SBWriteResPair<WriteBZHI, [SBPort1], 1>;
 
 // Scalar and vector floating point.
 def  : WriteRes<WriteFStore,       [SBPort23, SBPort4]>;
@@ -145,6 +151,7 @@ defm : SBWriteResPair<WriteVecShift, [SBPort5], 1>;
 defm : SBWriteResPair<WriteVecLogic, [SBPort5], 1>;
 defm : SBWriteResPair<WriteVecALU,   [SBPort1], 3>;
 defm : SBWriteResPair<WriteVecIMul,  [SBPort0], 5>;
+defm : SBWriteResPair<WritePMULLD,   [SBPort0], 5, [1], 1, 6>; // TODO this is probably wrong for 256/512-bit for the "generic" model
 defm : SBWriteResPair<WriteShuffle,  [SBPort5], 1>;
 defm : SBWriteResPair<WriteBlend,   [SBPort15], 1>;
 defm : SBWriteResPair<WriteVarBlend, [SBPort1, SBPort5], 2>;
@@ -202,6 +209,11 @@ def : WriteRes<WritePCmpEStrILd, [SBPort015, SBPort23]> {
   let Latency = 4;
   let ResourceCycles = [7, 1];
 }
+
+// MOVMSK Instructions.
+def : WriteRes<WriteFMOVMSK, [SBPort0]> { let Latency = 2; }
+def : WriteRes<WriteVecMOVMSK, [SBPort0]> { let Latency = 2; }
+def : WriteRes<WriteMMXMOVMSK, [SBPort0]> { let Latency = 1; }
 
 // AES Instructions.
 def : WriteRes<WriteAESDecEnc, [SBPort5,SBPort015]> {
@@ -526,10 +538,7 @@ def SBWriteResGroup7 : SchedWriteRes<[SBPort0]> {
   let NumMicroOps = 1;
   let ResourceCycles = [1];
 }
-def: InstRW<[SBWriteResGroup7], (instregex "(V?)PMOVMSKBrr",
-                                           "(V?)MOVMSKPD(Y?)rr",
-                                           "(V?)MOVMSKPS(Y?)rr",
-                                           "(V?)MOVPDI2DIrr",
+def: InstRW<[SBWriteResGroup7], (instregex "(V?)MOVPDI2DIrr",
                                            "(V?)MOVPQIto64rr")>;
 
 def SBWriteResGroup9 : SchedWriteRes<[SBPort05]> {
@@ -664,7 +673,6 @@ def: InstRW<[SBWriteResGroup20], (instregex "MMX_PMADDUBSWrr",
                                             "(V?)PMULHRSWrr",
                                             "(V?)PMULHUWrr",
                                             "(V?)PMULHWrr",
-                                            "(V?)PMULLDrr",
                                             "(V?)PMULLWrr",
                                             "(V?)PMULUDQrr",
                                             "(V?)PSADBWrr")>;
@@ -678,8 +686,6 @@ def: InstRW<[SBWriteResGroup21], (instrs MUL8r, IMUL16rr, IMUL32rr, IMUL32rri, I
 def: InstRW<[SBWriteResGroup21], (instregex "ADD_FPrST0",
                                             "ADD_FST0r",
                                             "ADD_FrST0",
-                                            "CRC32r(16|32|64)r8",
-                                            "CRC32r(16|32|64)r64",
                                             "MMX_CVTPI2PSirr",
                                             "MMX_CVTPS2PIirr",
                                             "MMX_CVTTPS2PIirr",
@@ -1416,9 +1422,7 @@ def SBWriteResGroup72 : SchedWriteRes<[SBPort1,SBPort23]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[SBWriteResGroup72], (instregex "CRC32r(16|32|64)m64",
-                                            "CRC32r(16|32|64)m8",
-                                            "FCOM32m",
+def: InstRW<[SBWriteResGroup72], (instregex "FCOM32m",
                                             "FCOM64m",
                                             "FCOMP32m",
                                             "FCOMP64m")>;
@@ -1598,7 +1602,6 @@ def: InstRW<[SBWriteResGroup89], (instregex "(V?)PMADDUBSWrm",
                                             "(V?)PMULHRSWrm",
                                             "(V?)PMULHUWrm",
                                             "(V?)PMULHWrm",
-                                            "(V?)PMULLDrm",
                                             "(V?)PMULLWrm",
                                             "(V?)PMULUDQrm",
                                             "(V?)PSADBWrm")>;

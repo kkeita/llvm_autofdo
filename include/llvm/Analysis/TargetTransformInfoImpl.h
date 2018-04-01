@@ -279,6 +279,8 @@ public:
 
   bool isProfitableToHoist(Instruction *I) { return true; }
 
+  bool useAA() { return false; }
+
   bool isTypeLegal(Type *Ty) { return false; }
 
   unsigned getJumpBufAlignment() { return 0; }
@@ -348,6 +350,8 @@ public:
   unsigned getRegisterBitWidth(bool Vector) const { return 32; }
 
   unsigned getMinVectorRegisterBitWidth() { return 128; }
+
+  bool shouldMaximizeVectorBandwidth(bool OptSize) const { return false; }
 
   bool
   shouldConsiderAddressTypePromotion(const Instruction &I,

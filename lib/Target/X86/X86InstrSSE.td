@@ -195,7 +195,7 @@ def SSE_MPSADBW_ITINS : OpndItins<
   IIC_SSE_MPSADBW_RR, IIC_SSE_MPSADBW_RM
 >;
 
-let Sched = WriteVecIMul in
+let Sched = WritePMULLD in
 def SSE_PMULLD_ITINS : OpndItins<
   IIC_SSE_PMULLD_RR, IIC_SSE_PMULLD_RM
 >;
@@ -2593,7 +2593,7 @@ multiclass sse12_extr_sign_mask<RegisterClass RC, ValueType vt,
   def rr : PI<0x50, MRMSrcReg, (outs GR32orGR64:$dst), (ins RC:$src),
               !strconcat(asm, "\t{$src, $dst|$dst, $src}"),
               [(set GR32orGR64:$dst, (X86movmsk (vt RC:$src)))], IIC_SSE_MOVMSK, d>,
-              Sched<[WriteVecLogic]>;
+              Sched<[WriteFMOVMSK]>;
 }
 
 let Predicates = [HasAVX] in {
@@ -4271,7 +4271,7 @@ defm PINSRW : sse2_pinsrw, PD;
 // SSE2 - Packed Mask Creation
 //===---------------------------------------------------------------------===//
 
-let ExeDomain = SSEPackedInt, SchedRW = [WriteVecLogic] in {
+let ExeDomain = SSEPackedInt, SchedRW = [WriteVecMOVMSK] in {
 
 def VPMOVMSKBrr  : VPDI<0xD7, MRMSrcReg, (outs GR32orGR64:$dst),
            (ins VR128:$src),
@@ -4283,8 +4283,8 @@ let Predicates = [HasAVX2] in {
 def VPMOVMSKBYrr  : VPDI<0xD7, MRMSrcReg, (outs GR32orGR64:$dst),
            (ins VR256:$src),
            "pmovmskb\t{$src, $dst|$dst, $src}",
-           [(set GR32orGR64:$dst, (X86movmsk (v32i8 VR256:$src)))]>,
-           VEX, VEX_L, VEX_WIG;
+           [(set GR32orGR64:$dst, (X86movmsk (v32i8 VR256:$src)))],
+           IIC_SSE_MOVMSK>, VEX, VEX_L, VEX_WIG;
 }
 
 def PMOVMSKBrr : PDI<0xD7, MRMSrcReg, (outs GR32orGR64:$dst), (ins VR128:$src),
@@ -6645,7 +6645,12 @@ multiclass SS41I_quaternary_int_avx<bits<8> opc, string OpcodeStr,
                         (IntId RC:$src1, (bitconvert (mem_frag addr:$src2)),
                                RC:$src3))],
                   itins.rm, SSEPackedInt>, TAPD, VEX_4V,
-                Sched<[itins.Sched.Folded, ReadAfterLd]>;
+                Sched<[itins.Sched.Folded, ReadAfterLd,
+                       // x86memop:$src2
+                       ReadDefault, ReadDefault, ReadDefault, ReadDefault,
+                       ReadDefault,
+                       // RC::$src3
+                       ReadAfterLd]>;
 }
 
 let Predicates = [HasAVX] in {
@@ -7074,14 +7079,14 @@ class SS42I_crc32r<bits<8> opc, string asm, RegisterClass RCOut,
   SS42FI<opc, MRMSrcReg, (outs RCOut:$dst), (ins RCOut:$src1, RCIn:$src2),
          !strconcat(asm, "\t{$src2, $src1|$src1, $src2}"),
          [(set RCOut:$dst, (Int RCOut:$src1, RCIn:$src2))], IIC_CRC32_REG>,
-         Sched<[WriteFAdd]>;
+         Sched<[WriteCRC32]>;
 
 class SS42I_crc32m<bits<8> opc, string asm, RegisterClass RCOut,
                    X86MemOperand x86memop, SDPatternOperator Int> :
   SS42FI<opc, MRMSrcMem, (outs RCOut:$dst), (ins RCOut:$src1, x86memop:$src2),
          !strconcat(asm, "\t{$src2, $src1|$src1, $src2}"),
          [(set RCOut:$dst, (Int RCOut:$src1, (load addr:$src2)))],
-         IIC_CRC32_MEM>, Sched<[WriteFAddLd, ReadAfterLd]>;
+         IIC_CRC32_MEM>, Sched<[WriteCRC32Ld, ReadAfterLd]>;
 
 let Constraints = "$src1 = $dst" in {
   def CRC32r32m8  : SS42I_crc32m<0xF0, "crc32{b}", GR32, i8mem,

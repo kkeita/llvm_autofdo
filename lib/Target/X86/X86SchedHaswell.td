@@ -115,6 +115,7 @@ defm : HWWriteResPair<WriteIMul,  [HWPort1],   3>;
 def  : WriteRes<WriteIMulH, []> { let Latency = 3; }
 defm : HWWriteResPair<WriteShift, [HWPort06],  1>;
 defm : HWWriteResPair<WriteJump,  [HWPort06],   1>;
+defm : HWWriteResPair<WriteCRC32, [HWPort1],   3>;
 
 // This is for simple LEAs with one or two input operands.
 // The complex ones can only execute on port 1, and they require two cycles on
@@ -126,6 +127,10 @@ defm : HWWriteResPair<WriteBitScan, [HWPort1], 3>;
 defm : HWWriteResPair<WriteLZCNT,   [HWPort1], 3>;
 defm : HWWriteResPair<WriteTZCNT,   [HWPort1], 3>;
 defm : HWWriteResPair<WritePOPCNT,  [HWPort1], 3>;
+
+// BMI1 BEXTR, BMI2 BZHI
+defm : HWWriteResPair<WriteBEXTR, [HWPort06,HWPort15], 2, [1,1], 2>;
+defm : HWWriteResPair<WriteBZHI, [HWPort15], 1>;
 
 // This is quite rough, latency depends on the dividend.
 defm : HWWriteResPair<WriteIDiv,  [HWPort0, HWDivider], 25, [1,10], 1, 4>;
@@ -158,6 +163,7 @@ defm : HWWriteResPair<WriteVecShift, [HWPort0],  1>;
 defm : HWWriteResPair<WriteVecLogic, [HWPort015], 1>;
 defm : HWWriteResPair<WriteVecALU,   [HWPort15],  1>;
 defm : HWWriteResPair<WriteVecIMul,  [HWPort0],   5>;
+defm : HWWriteResPair<WritePMULLD,   [HWPort0], 10, [2], 2, 6>;
 defm : HWWriteResPair<WriteShuffle,  [HWPort5],  1>;
 defm : HWWriteResPair<WriteBlend,  [HWPort15],  1>;
 defm : HWWriteResPair<WriteShuffle256,  [HWPort5],  3>;
@@ -214,6 +220,11 @@ def : WriteRes<WritePCmpEStrILd, [HWPort0, HWPort5, HWPort23, HWPort0156]> {
   let NumMicroOps = 9;
   let ResourceCycles = [4,3,1,1];
 }
+
+// MOVMSK Instructions.
+def : WriteRes<WriteFMOVMSK, [HWPort0]> { let Latency = 3; }
+def : WriteRes<WriteVecMOVMSK, [HWPort0]> { let Latency = 3; }
+def : WriteRes<WriteMMXMOVMSK, [HWPort0]> { let Latency = 1; }
 
 // AES Instructions.
 def : WriteRes<WriteAESDecEnc, [HWPort5]> {
@@ -657,7 +668,6 @@ def HWWriteResGroup2 : SchedWriteRes<[HWPort0]> {
 }
 def: InstRW<[HWWriteResGroup2], (instregex "MMX_MOVD64from64rr",
                                            "MMX_MOVD64grr",
-                                           "MMX_PMOVMSKBrr",
                                            "MMX_PSLLDri",
                                            "MMX_PSLLDrr",
                                            "MMX_PSLLQri",
@@ -839,7 +849,6 @@ def: InstRW<[HWWriteResGroup8], (instregex "ANDN(32|64)rr",
                                            "BLSI(32|64)rr",
                                            "BLSMSK(32|64)rr",
                                            "BLSR(32|64)rr",
-                                           "BZHI(32|64)rr",
                                            "LEA(16|32|64)(_32)?r",
                                            "MMX_PABSBrr",
                                            "MMX_PABSDrr",
@@ -1225,7 +1234,6 @@ def: InstRW<[HWWriteResGroup16], (instregex "ANDN(32|64)rm",
                                             "BLSI(32|64)rm",
                                             "BLSMSK(32|64)rm",
                                             "BLSR(32|64)rm",
-                                            "BZHI(32|64)rm",
                                             "MMX_PABSBrm",
                                             "MMX_PABSDrm",
                                             "MMX_PABSWrm",
@@ -1601,8 +1609,7 @@ def HWWriteResGroup34 : SchedWriteRes<[HWPort06,HWPort15]> {
   let NumMicroOps = 2;
   let ResourceCycles = [1,1];
 }
-def: InstRW<[HWWriteResGroup34], (instregex "BEXTR(32|64)rr",
-                                            "BSWAP(16|32|64)r")>;
+def: InstRW<[HWWriteResGroup34], (instregex "BSWAP(16|32|64)r")>;
 
 def HWWriteResGroup35 : SchedWriteRes<[HWPort06,HWPort0156]> {
   let Latency = 2;
@@ -1706,13 +1713,6 @@ def: InstRW<[HWWriteResGroup41], (instregex "LRETQ",
                                             "RETL",
                                             "RETQ")>;
 
-def HWWriteResGroup42 : SchedWriteRes<[HWPort23,HWPort06,HWPort15]> {
-  let Latency = 7;
-  let NumMicroOps = 3;
-  let ResourceCycles = [1,1,1];
-}
-def: InstRW<[HWWriteResGroup42], (instregex "BEXTR(32|64)rm")>;
-
 def HWWriteResGroup43 : SchedWriteRes<[HWPort23,HWPort06,HWPort0156]> {
   let Latency = 7;
   let NumMicroOps = 3;
@@ -1761,15 +1761,6 @@ def HWWriteResGroup48 : SchedWriteRes<[HWPort4,HWPort6,HWPort23,HWPort237,HWPort
 }
 def: InstRW<[HWWriteResGroup48], (instregex "CALL(16|32|64)m",
                                             "FARCALL64")>;
-
-def HWWriteResGroup49 : SchedWriteRes<[HWPort0]> {
-  let Latency = 3;
-  let NumMicroOps = 1;
-  let ResourceCycles = [1];
-}
-def: InstRW<[HWWriteResGroup49], (instregex "(V?)MOVMSKPD(Y?)rr",
-                                            "(V?)MOVMSKPS(Y?)rr",
-                                            "(V?)PMOVMSKB(Y?)rr")>;
 
 def HWWriteResGroup50 : SchedWriteRes<[HWPort1]> {
   let Latency = 3;
@@ -2689,20 +2680,6 @@ def HWWriteResGroup117 : SchedWriteRes<[HWPort0,HWPort1,HWPort5,HWPort23]> {
   let ResourceCycles = [1,1,1,1];
 }
 def: InstRW<[HWWriteResGroup117], (instregex "(V?)DPPDrmi")>;
-
-def HWWriteResGroup118 : SchedWriteRes<[HWPort0]> {
-  let Latency = 10;
-  let NumMicroOps = 2;
-  let ResourceCycles = [2];
-}
-def: InstRW<[HWWriteResGroup118], (instregex "(V?)PMULLD(Y?)rr")>;
-
-def HWWriteResGroup119 : SchedWriteRes<[HWPort0,HWPort23]> {
-  let Latency = 16;
-  let NumMicroOps = 3;
-  let ResourceCycles = [2,1];
-}
-def: InstRW<[HWWriteResGroup119], (instregex "(V?)PMULLDrm")>;
 
 def HWWriteResGroup119_1 : SchedWriteRes<[HWPort0,HWPort23]> {
   let Latency = 17;
