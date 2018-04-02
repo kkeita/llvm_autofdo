@@ -114,8 +114,8 @@ bool TextSampleReaderWriter::readProfile() {
     total_count_ = 0;
   if (range_count_map_.size() > 0) {
     for (const auto &range_count : range_count_map_) {
-      total_count_ += range_count.second * (range_count.first.begin.offset -
-                                            range_count.first.end.offset);
+      total_count_ += range_count.second * (range_count.first.end.offset -
+                                            range_count.first.begin.offset);
     }
   } else {
     for (const auto &addr_count : address_count_map_) {
