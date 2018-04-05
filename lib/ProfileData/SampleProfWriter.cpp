@@ -82,6 +82,8 @@ std::error_code SampleProfileWriterText::write(const FunctionSamples &S) {
   for (const auto &I : SortedSamples.get()) {
     LineLocation Loc = I->first;
       const SampleRecord &Sample = I->second;
+    if (Sample.getSamples()  == 0 /* and Sample.getCallTargets().size() == 0*/)
+          continue;
     OS.indent(Indent + 1);
     if (Loc.Discriminator == 0)
       OS << Loc.LineOffset << ": ";
@@ -102,6 +104,7 @@ std::error_code SampleProfileWriterText::write(const FunctionSamples &S) {
     for (const auto &FS : I->second) {
       LineLocation Loc = I->first;
       const FunctionSamples &CalleeSamples = FS.second;
+      if (CalleeSamples.getTotalSamples() == 0) continue ;
       OS.indent(Indent);
       if (Loc.Discriminator == 0)
         OS << Loc.LineOffset << ": ";

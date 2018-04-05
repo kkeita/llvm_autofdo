@@ -24,7 +24,8 @@
 #include "symbol_map.h"
 #include "sample_reader.h"
 #include "llvm/Support/CommandLine.h"
-
+#include <sstream>
+#include <fstream>
 #define DEBUG(x) {};
 llvm::cl::opt<bool> UseLbr("use-lbr",llvm::cl::desc("Whether to use lbr profile."),
                      llvm::cl::init(true));
@@ -96,6 +97,9 @@ void Profile::ProcessPerFunctionProfile(string func_name,
                                         const ProfileMaps &maps) {
 
   AddressCountMap map;
+  std::stringstream out ;
+  out << "function : " << func_name << " -- "
+    << std::hex << symbolizer.getVaddressFromFileOffset(maps.start_addr) << " : " << symbolizer.getVaddressFromFileOffset(maps.end_addr) << std::dec << std::endl ;
   const AddressCountMap *map_ptr;
   if (UseLbr) {
     if (maps.range_count_map.size() == 0) {
@@ -112,7 +116,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   } else {
     map_ptr = &maps.address_count_map;
   }
-
+  out << "-addresses-" << std::endl ;
   for (const auto &address_count : *map_ptr) {
     auto &sourceInfo = symbolizer.symbolizeInstruction(address_count.first);
 
@@ -125,13 +129,17 @@ void Profile::ProcessPerFunctionProfile(string func_name,
     if (sourceInfo.get().getNumberOfFrames() > 0) {
       auto duplicationFactor = InstructionSymbolizer::getDuplicationFactor(
               sourceInfo.get().getFrame(0));
+      out << std::hex << symbolizer.getVaddressFromFileOffset(address_count.first) << std::dec << " --> " ;
+      symbolizer.print(sourceInfo.get(),out);
+      out << " --> " << address_count.second * duplicationFactor  << std::endl ;
+
       symbol_map_->AddSourceCount(
           func_name, sourceInfo.get(),
           address_count.second * duplicationFactor, 0,
           SymbolMap::MAX);
     }
   }
-
+  out  << "-branches-" << std::endl ;
   for (const auto &branch_count : maps.branch_count_map) {
     DEBUG(std::cout << "Processing : " << std::hex << branch_count.first << std::dec << std::endl);
       auto &instInfo = symbolizer.symbolizeInstruction(branch_count.first.instruction);
@@ -149,6 +157,10 @@ void Profile::ProcessPerFunctionProfile(string func_name,
       continue;
     }
     if (symbol_map_->map().count(*callee)) {
+      out << std::hex << symbolizer.getVaddressFromFileOffset(branch_count.first.instruction) << std::dec << " --> " ;
+      symbolizer.print(instInfo.get(),out);
+      out << " --> " << branch_count.second  << std::endl ;
+
       symbol_map_->AddSymbolEntryCount(*callee, branch_count.second);
       symbol_map_->AddIndirectCallTarget(func_name, instInfo.get(), *callee, branch_count.second);
     }
@@ -157,6 +169,9 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   for (const auto &addr_count : *map_ptr) {
     global_addr_count_map_[addr_count.first] = addr_count.second;
   }
+     std::ofstream outfile("./llvm_create_prof_file/"+func_name);
+        outfile << out.rdbuf();
+           outfile.close();
 }
 
 void Profile::ComputeProfile() {
@@ -168,8 +183,13 @@ void Profile::ComputeProfile() {
   // AddSymbolEntryCount for other symbols, which may or may not had been
   // processed by ProcessPerFunctionProfile.
   for (const auto &symbol_profile : symbol_profile_maps_) {
-    if (symbol_map_->ShouldEmit(symbol_profile.second->GetAggregatedCount()))
+    //std::cout << "Symbol " << symbol_profile.first << " : " << symbol_profile.second->GetAggregatedCount();
+    if (symbol_map_->ShouldEmit(symbol_profile.second->GetAggregatedCount())){
       symbol_map_->AddSymbol(symbol_profile.first);
+      //std::cout << " added " << std::endl ;
+    } else {
+       //std::cout << "skipped" << std::endl ;
+    }
   }
 
   // Traverse the symbol map to process the profiles.

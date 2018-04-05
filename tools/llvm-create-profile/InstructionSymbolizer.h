@@ -38,17 +38,36 @@ namespace autofdo {
                         /* std::string DefaultArch =*/ ""),
                 symbolizer(symbolizerOption),Printer(llvm::errs()){
         };
-
+       void print(const DILineInfo & info, std::ostream & out) {
+            //ss << stack[i].dir_name << "/" << stack[i].file_name << ":"<< stack[i].start_line << "-" <<stack[i].line<<":"<< stack[i].discriminator <<", ";
+            out << std::string(llvm::sys::path::filename(info.FileName)) << ":" << info.StartLine << "-" << info.Line << ":" << info.Discriminator ;
+        }
+        void print(DIInliningInfo & info,std::ostream & out) {
+            out << "[ "  ;
+            for (int i  = 0 ;  i < info.getNumberOfFrames();++i){
+                print(info.getFrame(i),out);
+                out << ", ";
+            }
+            out << "]";
+        }
         Expected<DIInliningInfo> &symbolizeInstruction(const InstructionLocation &inst) {
             auto it = instructionMap.insert(decltype(instructionMap)::value_type{inst, nullptr});
             DEBUG(std::cerr << "Symbolizing Instruction " << std::hex << inst << std::dec << std::endl);
             if (it.second) {
                 uint64_t vaddr = getVaddressFromFileOffset(inst);
-
                 DEBUG(std::cerr << "vaddr : " << vaddr << endl) ;
                 //Expected expect to be cheched before beeing moved-assigned
                 it.first->second = std::unique_ptr<llvm::Expected<llvm::DIInliningInfo>>
                         (new llvm::Expected<llvm::DIInliningInfo>{std::move(symbolizer.symbolizeInlinedCode(inst.objectFile, vaddr))});
+                /*
+                if ( ( (*it.first->second.get()).get().getNumberOfFrames() > 0) and
+                     ( (*it.first->second.get()).get().getFrame(0).FunctionName == "<invalid>") )
+                     it.first->second = std::unique_ptr<llvm::Expected<llvm::DIInliningInfo>>(new llvm::Expected<llvm::DIInliningInfo>(DIInliningInfo()));
+                */
+                //Printer << (*it.first->second.get()).get()
+                //std::cout << std::hex << vaddr << std::dec << " --> " ;
+                //print((*it.first->second.get()).get(),std::cout);
+                //std::cout << " --> " << count << std::endl ;
             }
             if (*it.first->second.get())
                 DEBUG(Printer << (*it.first->second.get()).get());
@@ -67,7 +86,7 @@ namespace autofdo {
                     llvm::DILocation::getBaseDiscriminatorFromDiscriminator(lineInfo.Discriminator);
         }
 
-    private:
+    public:
         uint64_t getVaddressFromFileOffset(const InstructionLocation &loc) {
             auto it = objectFileCache.insert(decltype(objectFileCache)::value_type{loc.objectFile, nullptr});
 

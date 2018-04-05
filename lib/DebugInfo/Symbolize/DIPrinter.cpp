@@ -26,7 +26,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-
+#include "llvm/IR/DebugInfoMetadata.h"
 namespace llvm {
 namespace symbolize {
 
@@ -89,7 +89,7 @@ void DIPrinter::print(const DILineInfo &Info, bool Inlined) {
   OS << "  Line: " << Info.Line << "\n";
   OS << "  Column: " << Info.Column << "\n";
   if (Info.Discriminator)
-    OS << "  Discriminator: " << Info.Discriminator << "\n";
+    OS << "  Discriminator: " << DILocation::getBaseDiscriminatorFromDiscriminator(Info.Discriminator) << "\n";
 }
 
 DIPrinter &DIPrinter::operator<<(const DILineInfo &Info) {

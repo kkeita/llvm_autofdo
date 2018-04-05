@@ -189,9 +189,13 @@ void SymbolMap::AddSymbol(const string &name) {
 
 
 
+const uint64_t kMinSamples = 10;
 
 void SymbolMap::CalculateThresholdFromTotalCount(int64_t total_count) {
   count_threshold_ = total_count * SampleThresholdFrac;
+  if (count_threshold_ < kMinSamples)
+    count_threshold_ = kMinSamples ;
+  std::cout << " SampleThresholdFrac : "<< SampleThresholdFrac << " total count :  " << total_count << " kMinSmaple : " << kMinSamples << "threshold : " << count_threshold_ << std::endl ;
 }
 
 
