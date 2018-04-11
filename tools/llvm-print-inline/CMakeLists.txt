@@ -1,0 +1,13 @@
+set(LLVM_LINK_COMPONENTS
+        DebugInfoDWARF
+        AllTargetsDescs
+        AllTargetsInfos
+        MC
+        Object
+        Support
+        ProfileData
+        Symbolize
+        )
+add_compile_options(-fno-rtti)
+add_llvm_tool(llvm-print-inline
+        llvm-print-inline.cpp)

@@ -270,6 +270,7 @@ bool DWARFDie::isSubroutineDIE() const {
   return Tag == DW_TAG_subprogram || Tag == DW_TAG_inlined_subroutine;
 }
 
+
 Optional<DWARFFormValue> DWARFDie::find(dwarf::Attribute Attr) const {
   if (!isValid())
     return None;
@@ -414,6 +415,11 @@ const char *DWARFDie::getName(DINameKind Kind) const {
 
 uint64_t DWARFDie::getDeclLine() const {
   return toUnsigned(findRecursively(DW_AT_decl_line), 0);
+}
+
+
+uint64_t DWARFDie::getDeclFile() const {
+  return toUnsigned(findRecursively(DW_AT_decl_file), 0);
 }
 
 void DWARFDie::getCallerFrame(uint32_t &CallFile, uint32_t &CallLine,

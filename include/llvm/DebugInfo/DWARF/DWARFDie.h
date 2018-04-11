@@ -237,6 +237,7 @@ public:
   /// DW_AT_abstract_origin references if necessary.
   uint64_t getDeclLine() const;
 
+    uint64_t getDeclFile() const ;
   /// Retrieves values of DW_AT_call_file, DW_AT_call_line and DW_AT_call_column
   /// from DIE (or zeroes if they are missing). This function looks for
   /// DW_AT_call attributes in this DIE only, it will not resolve the attribute
