@@ -123,7 +123,8 @@ int main(int argc, char **argv)  {
             ss << std::endl;
             size_t current_size = dies.size() ;
             for (auto const & child : die.children()){
-                if (child.isSubroutineDIE())
+                if (!child.isSubroutineDIE() or  (die.getSubroutineName(DINameKind::LinkageName) == nullptr))
+                    continue ;
                     dies.push_back(std::make_pair(child,depth +1));
             }
 
