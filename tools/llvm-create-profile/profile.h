@@ -50,7 +50,7 @@ class Profile {
   void ComputeProfile();
 
  private:
-    InstructionSymbolizer symbolizer;
+ InstructionSymbolizer symbolizer;
   // Internal data structure that aggregates profile for each symbol.
   struct ProfileMaps {
     ProfileMaps(InstructionLocation start, InstructionLocation end) : start_addr(start), end_addr(end) {}
@@ -60,7 +60,8 @@ class Profile {
     AddressCountMap address_count_map;
     RangeCountMap range_count_map;
     BranchCountMap branch_count_map;
-  };
+    };
+
   typedef map<string, ProfileMaps*> SymbolProfileMaps;
 
   // Returns the profile maps for a give function.
@@ -78,6 +79,33 @@ class Profile {
   SymbolMap *symbol_map_;
   AddressCountMap global_addr_count_map_;
   SymbolProfileMaps symbol_profile_maps_;
+friend std::ostream & operator<<(std::ostream &os, const Profile::ProfileMaps & maps) {
+InstructionSymbolizer symbolizer;
+  //auto &maps = *this;
+         os << std::hex << "start_addr: " << symbolizer.getVaddressFromFileOffset(maps.start_addr)
+           << " end_addr: " << symbolizer.getVaddressFromFileOffset(maps.end_addr) <<std::dec <<  std::endl;
+
+        os << " address_count_map: "  << maps.address_count_map.size() << std::endl ;
+        for (auto const & addr : maps.address_count_map) {
+            os << std::hex << symbolizer.getVaddressFromFileOffset(addr.first) << std::dec << ":" << addr.second <<std::endl;
+        }
+
+
+        os << " range_count_map: "  << maps.range_count_map.size() << std::endl ;
+        for (auto const & range : maps.range_count_map) {
+            os << std::hex << symbolizer.getVaddressFromFileOffset(range.first.begin)<< "-" << symbolizer.getVaddressFromFileOffset(range.first.end) << std::dec
+               << ":" << range.second <<std::endl;
+        }
+
+
+        os << " branch_count_map: "  << maps.branch_count_map.size() << std::endl ;
+        for (auto const & branch : maps.branch_count_map) {
+            os << std::hex << symbolizer.getVaddressFromFileOffset(branch.first.instruction) << "->" << symbolizer.getVaddressFromFileOffset(branch.first.target) << std::dec
+               << ":" << branch.second <<std::endl;
+        }
+        return os;
+    }
+
 
   //DISALLOW_COPY_AND_ASSIGN(Profile);
 };

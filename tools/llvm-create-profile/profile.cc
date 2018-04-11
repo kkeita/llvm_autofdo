@@ -95,9 +95,14 @@ uint64_t Profile::ProfileMaps::GetAggregatedCount() const {
 
 void Profile::ProcessPerFunctionProfile(string func_name,
                                         const ProfileMaps &maps) {
+  //std::ofstream("./create_llvm_prof/"+funct_name);
+  std::stringstream out2;
+  out2 << "Maps for " << func_name << std::endl;
+  out2 << maps << std::endl ;
 
   AddressCountMap map;
   std::stringstream out ;
+  std::stringstream out3;
   out << "function : " << func_name << " -- "
     << std::hex << symbolizer.getVaddressFromFileOffset(maps.start_addr) << " : " << symbolizer.getVaddressFromFileOffset(maps.end_addr) << std::dec << std::endl ;
   const AddressCountMap *map_ptr;
@@ -116,8 +121,10 @@ void Profile::ProcessPerFunctionProfile(string func_name,
   } else {
     map_ptr = &maps.address_count_map;
   }
-  out << "-addresses-" << std::endl ;
+  out3 << "-addresses-" << std::endl ;
   for (const auto &address_count : *map_ptr) {
+    out3 << std::hex << symbolizer.getVaddressFromFileOffset(address_count.first) << std::dec ;
+    out3 << " --> " << address_count.second  << std::endl ;
     auto &sourceInfo = symbolizer.symbolizeInstruction(address_count.first);
 
     if (!sourceInfo) {
@@ -129,10 +136,10 @@ void Profile::ProcessPerFunctionProfile(string func_name,
     if (sourceInfo.get().getNumberOfFrames() > 0) {
       auto duplicationFactor = InstructionSymbolizer::getDuplicationFactor(
               sourceInfo.get().getFrame(0));
-      out << std::hex << symbolizer.getVaddressFromFileOffset(address_count.first) << std::dec << " --> " ;
-      symbolizer.print(sourceInfo.get(),out);
+      out << std::hex << symbolizer.getVaddressFromFileOffset(address_count.first) << std::dec ;
+      out << " --> " ; symbolizer.print(sourceInfo.get(),out);
       out << " --> " << address_count.second * duplicationFactor  << std::endl ;
-
+      out << " --> " << symbolizer.Offset(sourceInfo.get().getFrame(0)) << std::endl;
       symbol_map_->AddSourceCount(
           func_name, sourceInfo.get(),
           address_count.second * duplicationFactor, 0,
@@ -157,8 +164,9 @@ void Profile::ProcessPerFunctionProfile(string func_name,
       continue;
     }
     if (symbol_map_->map().count(*callee)) {
-      out << std::hex << symbolizer.getVaddressFromFileOffset(branch_count.first.instruction) << std::dec << " --> " ;
-      symbolizer.print(instInfo.get(),out);
+      out << std::hex << symbolizer.getVaddressFromFileOffset(branch_count.first.instruction) << std::dec;
+      /*<< " --> " ;
+      symbolizer.print(instInfo.get(),out);*/
       out << " --> " << branch_count.second  << std::endl ;
 
       symbol_map_->AddSymbolEntryCount(*callee, branch_count.second);
@@ -170,7 +178,7 @@ void Profile::ProcessPerFunctionProfile(string func_name,
     global_addr_count_map_[addr_count.first] = addr_count.second;
   }
      std::ofstream outfile("./llvm_create_prof_file/"+func_name);
-        outfile << out.rdbuf();
+        outfile << out3.rdbuf();
            outfile.close();
 }
 
