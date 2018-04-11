@@ -94,7 +94,6 @@ int main(int argc, char **argv)  {
         return std::tie(callLineA,discriminatorA) < std::tie(callLineB,discriminatorB);
     };
 
-    std::cout << "before" << std::endl ;
     for (const auto & compilationUnit : debugContext->compile_units()) {
         std::cout << "New compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName)
                   << (compilationUnit->getUnitDIE(false).hasChildren() ? " children " : " no children ") ;
@@ -102,7 +101,7 @@ int main(int argc, char **argv)  {
         //scan for all top level subroutine entries in the give compilation unit
         dies.clear();
         for (auto const & die : compilationUnit->getUnitDIE(false).children()){
-            if(!die.isSubprogramDIE()) continue ;
+            if(!die.isSubprogramDIE() or !die.hasChildren() or (die.getSubroutineName(DINameKind::LinkageName) == nullptr)) continue ;
             assert(die.isValid());
             dies.push_back(std::make_pair(die,0));
         };
