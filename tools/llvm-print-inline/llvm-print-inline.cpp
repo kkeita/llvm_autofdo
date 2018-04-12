@@ -113,7 +113,7 @@ int main(int argc, char **argv)  {
                  std::string(b.first.getSubroutineName(DINameKind::LinkageName));});
 
         while (!dies.empty()){
-            const auto & die =  dies.back().first;
+            const auto die =  dies.back().first;
             int depth = dies.back().second;
             dies.pop_back();
 
@@ -130,12 +130,13 @@ int main(int argc, char **argv)  {
                 for (int i = 0; i < depth; ++i)
                     ss << ' ';
                 printSubroutineDie(die, LineTable, ss);
+                ss << std::endl;
                 //sort the new added children die
                 std::sort(dies.begin() + current_size, dies.end(), [&die_compare]
                         (const std::pair<DWARFDie, int> &a, const std::pair<DWARFDie, int> &b) {
                     return die_compare(b.first, a.first);
                 });
-                ss << std::endl;
+
 
             }
             }
