@@ -95,8 +95,6 @@ int main(int argc, char **argv)  {
     };
 
     for (const auto & compilationUnit : debugContext->compile_units()) {
-        std::cout << "New compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName)
-                  << (compilationUnit->getUnitDIE(false).hasChildren() ? " children " : " no children ") ;
         const DWARFLineTable & LineTable = *debugContext->getLineTableForUnit(compilationUnit.get());
         //scan for all top level subroutine entries in the give compilation unit
         dies.clear();
@@ -105,7 +103,8 @@ int main(int argc, char **argv)  {
             assert(die.isValid());
             dies.push_back(std::make_pair(die,0));
         };
-        std::cout << dies.size() << " function(s)" <<std::endl;
+        std::cout << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName)
+                  << " "<< dies.size() << " function(s)" <<std::endl;
         std::sort(dies.begin(),dies.end(),[&die_compare]
                 (const std::pair<DWARFDie, int> & a, const std::pair<DWARFDie, int> & b)
         {         assert(a.first.getSubroutineName(DINameKind::LinkageName) != nullptr);
@@ -117,21 +116,29 @@ int main(int argc, char **argv)  {
             const auto & die =  dies.back().first;
             int depth = dies.back().second;
             dies.pop_back();
-            for (int i = 0 ; i < depth; ++i)
-                ss << ' ' ;
-            printSubroutineDie(die,LineTable,ss);
-            ss << std::endl;
+
             size_t current_size = dies.size() ;
+
             for (auto const & child : die.children()){
-                if (!child.isSubroutineDIE() or  (die.getSubroutineName(DINameKind::LinkageName) == nullptr))
+                if (!child.isSubroutineDIE() or  (child.getSubroutineName(DINameKind::LinkageName) == nullptr))
                     continue ;
                     dies.push_back(std::make_pair(child,depth +1));
             }
 
-            //sort the new added children die
-            std::sort(dies.begin() + current_size,dies.end(),[&die_compare]
-                    (const std::pair<DWARFDie, int> & a, const std::pair<DWARFDie, int> & b) { return die_compare(b.first,a.first);});
-        }
+            //Only print functions with at least one inline call site
+            if (dies.size() >  current_size) {
+                for (int i = 0; i < depth; ++i)
+                    ss << ' ';
+                printSubroutineDie(die, LineTable, ss);
+                //sort the new added children die
+                std::sort(dies.begin() + current_size, dies.end(), [&die_compare]
+                        (const std::pair<DWARFDie, int> &a, const std::pair<DWARFDie, int> &b) {
+                    return die_compare(b.first, a.first);
+                });
+                ss << std::endl;
+
+            }
+            }
     }
 
     //std::cout << ss.rdbuf() << std::endl;
