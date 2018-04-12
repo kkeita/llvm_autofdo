@@ -125,8 +125,8 @@ int main(int argc, char **argv)  {
                     dies.push_back(std::make_pair(child,depth +1));
             }
 
-            //Only print functions with at least one inline call site
-            if (dies.size() >  current_size) {
+            //We dont print top level functions with no inline call site
+            if ( (depth !=0) or (dies.size() >  current_size)) {
                 for (int i = 0; i < depth; ++i)
                     ss << ' ';
                 printSubroutineDie(die, LineTable, ss);
