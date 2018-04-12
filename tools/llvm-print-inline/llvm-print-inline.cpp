@@ -23,11 +23,9 @@ using FunctionNameKind = DILineInfoSpecifier::FunctionNameKind;
 cl::opt<std::string> Binary("binary", llvm::cl::desc( "Binary file name"),llvm::cl::Required);
 
 
-
-
 //get the corresponding debug context or fails terminally
-static std::unique_ptr<DWARFContext> getDebugContext(std::string & path) {
-    static auto expected_file = object::createBinary(Binary);
+static std::pair<std::unique_ptr<DWARFContext>,object::OwningBinary<object::Binary>> getDebugContext(std::string & path) {
+    auto expected_file = object::createBinary(Binary);
     if (!expected_file) {
         llvm::errs() << "Couldnt open " << Binary;
         exit(-1);
@@ -43,7 +41,7 @@ static std::unique_ptr<DWARFContext> getDebugContext(std::string & path) {
         if (context == nullptr) {
             llvm::errs() << "Failed to load debug info for  " << Binary;
         }
-        return context ;
+        return make_pair(std::move(context), std::move(expected_file.get())) ;
 }
 
 
@@ -55,7 +53,6 @@ static DILineInfo getLineInfo(const DWARFDie & die, const DWARFLineTable & LineT
 
 static void printSubroutineDie(const DWARFDie & FunctionDIE , const DWARFLineTable & LineTable, std::ostream &out) {
     assert(FunctionDIE.isSubroutineDIE());
-
     std::string name = FunctionDIE.getSubroutineName(infoSpec.FNKind);
 
     if (FunctionDIE.isSubprogramDIE()) {
@@ -75,7 +72,8 @@ int main(int argc, char **argv)  {
     llvm::cl::ParseCommandLineOptions(argc,argv,"");
 
     // Getting a debug context
-    auto debugContext  = getDebugContext(Binary);
+    auto context_  = getDebugContext(Binary);
+    auto debugContext = std::move(context_.first) ;
 
     // Die and depth level for printing
     // a std::stack would have been sufficient here, but since we also sort the element inplace
@@ -96,21 +94,26 @@ int main(int argc, char **argv)  {
 
     for (const auto & compilationUnit : debugContext->compile_units()) {
         const DWARFLineTable & LineTable = *debugContext->getLineTableForUnit(compilationUnit.get());
-        //scan for all top level subroutine entries in the give compilation unit
+
+        //scan for all top level subroutine entries in the given compilation unit
         dies.clear();
         for (auto const & die : compilationUnit->getUnitDIE(false).children()){
             if(!die.isSubprogramDIE() or !die.hasChildren() or (die.getSubroutineName(DINameKind::LinkageName) == nullptr)) continue ;
             assert(die.isValid());
+            //we should fail on non contiguous functions
+            assert(die.getAddressRanges().size() < 2);
             dies.push_back(std::make_pair(die,0));
         };
-        std::cout << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName)
+
+        ss << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName)
                   << " "<< dies.size() << " function(s)" <<std::endl;
+
         std::sort(dies.begin(),dies.end(),[&die_compare]
-                (const std::pair<DWARFDie, int> & a, const std::pair<DWARFDie, int> & b)
-        {         assert(a.first.getSubroutineName(DINameKind::LinkageName) != nullptr);
+                (const std::pair<DWARFDie, int> & a, const std::pair<DWARFDie, int> & b) {
+                  assert(a.first.getSubroutineName(DINameKind::LinkageName) != nullptr);
                   assert(b.first.getSubroutineName(DINameKind::LinkageName) != nullptr);
-                 return std::string(a.first.getSubroutineName(DINameKind::LinkageName)) <
-                 std::string(b.first.getSubroutineName(DINameKind::LinkageName));});
+                  return std::string(a.first.getSubroutineName(DINameKind::LinkageName)) <
+                         std::string(b.first.getSubroutineName(DINameKind::LinkageName));});
 
         while (!dies.empty()){
             const auto die =  dies.back().first;
@@ -131,6 +134,7 @@ int main(int argc, char **argv)  {
                     ss << ' ';
                 printSubroutineDie(die, LineTable, ss);
                 ss << std::endl;
+
                 //sort the new added children die
                 std::sort(dies.begin() + current_size, dies.end(), [&die_compare]
                         (const std::pair<DWARFDie, int> &a, const std::pair<DWARFDie, int> &b) {
