@@ -3,7 +3,7 @@
 ; RUN: llc < %s -mtriple=x86_64-unknown-unknown -mattr=+sse4.1  | FileCheck %s --check-prefix=SSE41
 ; RUN: llc < %s -mtriple=x86_64-unknown-unknown -mattr=+avx     | FileCheck %s --check-prefix=AVX1
 
-define float @trunc_unsigned_f32(float %x) nounwind {
+define float @trunc_unsigned_f32(float %x) #0 {
 ; SSE2-LABEL: trunc_unsigned_f32:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    cvttss2si %xmm0, %rax
@@ -26,7 +26,7 @@ define float @trunc_unsigned_f32(float %x) nounwind {
   ret float %r
 }
 
-define double @trunc_unsigned_f64(double %x) nounwind {
+define double @trunc_unsigned_f64(double %x) #0 {
 ; SSE2-LABEL: trunc_unsigned_f64:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    movsd {{.*#+}} xmm1 = mem[0],zero
@@ -59,7 +59,7 @@ define double @trunc_unsigned_f64(double %x) nounwind {
   ret double %r
 }
 
-define <4 x float> @trunc_unsigned_v4f32(<4 x float> %x) nounwind {
+define <4 x float> @trunc_unsigned_v4f32(<4 x float> %x) #0 {
 ; SSE2-LABEL: trunc_unsigned_v4f32:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    movaps %xmm0, %xmm1
@@ -102,7 +102,7 @@ define <4 x float> @trunc_unsigned_v4f32(<4 x float> %x) nounwind {
   ret <4 x float> %r
 }
 
-define <2 x double> @trunc_unsigned_v2f64(<2 x double> %x) nounwind {
+define <2 x double> @trunc_unsigned_v2f64(<2 x double> %x) #0 {
 ; SSE2-LABEL: trunc_unsigned_v2f64:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    movaps %xmm0, %xmm1
@@ -152,7 +152,7 @@ define <2 x double> @trunc_unsigned_v2f64(<2 x double> %x) nounwind {
   ret <2 x double> %r
 }
 
-define <4 x double> @trunc_unsigned_v4f64(<4 x double> %x) nounwind {
+define <4 x double> @trunc_unsigned_v4f64(<4 x double> %x) #0 {
 ; SSE2-LABEL: trunc_unsigned_v4f64:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    movaps %xmm1, %xmm3
@@ -230,7 +230,7 @@ define <4 x double> @trunc_unsigned_v4f64(<4 x double> %x) nounwind {
   ret <4 x double> %r
 }
 
-define float @trunc_signed_f32(float %x) nounwind {
+define float @trunc_signed_f32(float %x) #0 {
 ; SSE2-LABEL: trunc_signed_f32:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    cvttss2si %xmm0, %eax
@@ -252,7 +252,7 @@ define float @trunc_signed_f32(float %x) nounwind {
   ret float %r
 }
 
-define double @trunc_signed_f64(double %x) nounwind {
+define double @trunc_signed_f64(double %x) #0 {
 ; SSE2-LABEL: trunc_signed_f64:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    cvttsd2si %xmm0, %rax
@@ -274,7 +274,7 @@ define double @trunc_signed_f64(double %x) nounwind {
   ret double %r
 }
 
-define <4 x float> @trunc_signed_v4f32(<4 x float> %x) nounwind {
+define <4 x float> @trunc_signed_v4f32(<4 x float> %x) #0 {
 ; SSE2-LABEL: trunc_signed_v4f32:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    cvttps2dq %xmm0, %xmm0
@@ -295,7 +295,7 @@ define <4 x float> @trunc_signed_v4f32(<4 x float> %x) nounwind {
   ret <4 x float> %r
 }
 
-define <2 x double> @trunc_signed_v2f64(<2 x double> %x) nounwind {
+define <2 x double> @trunc_signed_v2f64(<2 x double> %x) #0 {
 ; SSE2-LABEL: trunc_signed_v2f64:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    cvttsd2si %xmm0, %rax
@@ -321,7 +321,7 @@ define <2 x double> @trunc_signed_v2f64(<2 x double> %x) nounwind {
   ret <2 x double> %r
 }
 
-define <4 x double> @trunc_signed_v4f64(<4 x double> %x) nounwind {
+define <4 x double> @trunc_signed_v4f64(<4 x double> %x) #0 {
 ; SSE2-LABEL: trunc_signed_v4f64:
 ; SSE2:       # %bb.0:
 ; SSE2-NEXT:    cvttsd2si %xmm1, %rax
@@ -355,4 +355,63 @@ define <4 x double> @trunc_signed_v4f64(<4 x double> %x) nounwind {
   %r = sitofp <4 x i64> %i to <4 x double>
   ret <4 x double> %r
 }
+
+; The fold may be guarded to allow existing code to continue 
+; working based on its assumptions of float->int overflow.
+
+define float @trunc_unsigned_f32_disable_via_attr(float %x) #1 {
+; SSE2-LABEL: trunc_unsigned_f32_disable_via_attr:
+; SSE2:       # %bb.0:
+; SSE2-NEXT:    cvttss2si %xmm0, %rax
+; SSE2-NEXT:    movl %eax, %eax
+; SSE2-NEXT:    xorps %xmm0, %xmm0
+; SSE2-NEXT:    cvtsi2ssq %rax, %xmm0
+; SSE2-NEXT:    retq
+;
+; SSE41-LABEL: trunc_unsigned_f32_disable_via_attr:
+; SSE41:       # %bb.0:
+; SSE41-NEXT:    cvttss2si %xmm0, %rax
+; SSE41-NEXT:    movl %eax, %eax
+; SSE41-NEXT:    xorps %xmm0, %xmm0
+; SSE41-NEXT:    cvtsi2ssq %rax, %xmm0
+; SSE41-NEXT:    retq
+;
+; AVX1-LABEL: trunc_unsigned_f32_disable_via_attr:
+; AVX1:       # %bb.0:
+; AVX1-NEXT:    vcvttss2si %xmm0, %rax
+; AVX1-NEXT:    movl %eax, %eax
+; AVX1-NEXT:    vcvtsi2ssq %rax, %xmm1, %xmm0
+; AVX1-NEXT:    retq
+  %i = fptoui float %x to i32
+  %r = uitofp i32 %i to float
+  ret float %r
+}
+
+define double @trunc_signed_f64_disable_via_attr(double %x) #1 {
+; SSE2-LABEL: trunc_signed_f64_disable_via_attr:
+; SSE2:       # %bb.0:
+; SSE2-NEXT:    cvttsd2si %xmm0, %rax
+; SSE2-NEXT:    xorps %xmm0, %xmm0
+; SSE2-NEXT:    cvtsi2sdq %rax, %xmm0
+; SSE2-NEXT:    retq
+;
+; SSE41-LABEL: trunc_signed_f64_disable_via_attr:
+; SSE41:       # %bb.0:
+; SSE41-NEXT:    cvttsd2si %xmm0, %rax
+; SSE41-NEXT:    xorps %xmm0, %xmm0
+; SSE41-NEXT:    cvtsi2sdq %rax, %xmm0
+; SSE41-NEXT:    retq
+;
+; AVX1-LABEL: trunc_signed_f64_disable_via_attr:
+; AVX1:       # %bb.0:
+; AVX1-NEXT:    vcvttsd2si %xmm0, %rax
+; AVX1-NEXT:    vcvtsi2sdq %rax, %xmm1, %xmm0
+; AVX1-NEXT:    retq
+  %i = fptosi double %x to i64
+  %r = sitofp i64 %i to double
+  ret double %r
+}
+
+attributes #0 = { nounwind "no-signed-zeros-fp-math"="true" }
+attributes #1 = { nounwind "no-signed-zeros-fp-math"="true" "strict-float-cast-overflow"="false" }
 

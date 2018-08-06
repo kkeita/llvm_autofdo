@@ -10,7 +10,7 @@
 /// Contains a collection of routines for determining if a given instruction is
 /// guaranteed to execute if a given point in control flow is reached.  The most
 /// common example is an instruction within a loop being provably executed if we
-/// branch to the header of it's containing loop.  
+/// branch to the header of it's containing loop.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -30,7 +30,7 @@ class Instruction;
 class DominatorTree;
 class Loop;
 
-/// \brief Captures loop safety information.
+/// Captures loop safety information.
 /// It keep information for loop & its header may throw exception or otherwise
 /// exit abnormaly on any iteration of the loop which might actually execute
 /// at runtime.  The primary way to consume this infromation is via
@@ -46,7 +46,7 @@ struct LoopSafetyInfo {
   LoopSafetyInfo() = default;
 };
 
-/// \brief Computes safety information for a loop checks loop body & header for
+/// Computes safety information for a loop checks loop body & header for
 /// the possibility of may throw exception, it takes LoopSafetyInfo and loop as
 /// argument. Updates safety information in LoopSafetyInfo argument.
 /// Note: This is defined to clear and reinitialize an already initialized
@@ -58,7 +58,7 @@ void computeLoopSafetyInfo(LoopSafetyInfo *, Loop *);
 bool isGuaranteedToExecute(const Instruction &Inst, const DominatorTree *DT,
                            const Loop *CurLoop,
                            const LoopSafetyInfo *SafetyInfo);
-  
+
 }
 
 #endif

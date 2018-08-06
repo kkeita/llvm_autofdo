@@ -1,12 +1,12 @@
 ========================
-LLVM 7.0.0 Release Notes
+LLVM 8.0.0 Release Notes
 ========================
 
 .. contents::
     :local:
 
 .. warning::
-   These are in-progress notes for the upcoming LLVM 7 release.
+   These are in-progress notes for the upcoming LLVM 8 release.
    Release notes for previous releases can be found on
    `the Download Page <http://releases.llvm.org/download.html>`_.
 
@@ -15,7 +15,7 @@ Introduction
 ============
 
 This document contains the release notes for the LLVM Compiler Infrastructure,
-release 7.0.0.  Here we describe the status of LLVM, including major improvements
+release 8.0.0.  Here we describe the status of LLVM, including major improvements
 from the previous release, improvements in various subprojects of LLVM, and
 some of the current users of the code.  All LLVM releases may be downloaded
 from the `LLVM releases web site <http://llvm.org/releases/>`_.
@@ -40,19 +40,6 @@ Non-comprehensive list of changes in this release
    functionality, or simply have a lot to talk about), see the `NOTE` below
    for adding a new subsection.
 
-* Libraries have been renamed from 7.0 to 7. This change also impacts
-  downstream libraries like lldb.
-
-* The LoopInstSimplify pass (-loop-instsimplify) has been removed.
-
-* Symbols starting with ``?`` are no longer mangled by LLVM when using the
-  Windows ``x`` or ``w`` IR mangling schemes.
-
-* A new tool named :doc:`llvm-mca <CommandGuide/llvm-mca>` has been added.
-  :program:`llvm-mca` is a  static performance analysis tool that uses
-  information available in LLVM to statically predict the performance of
-  machine code for a specific CPU.
-
 * Note..
 
 .. NOTE
@@ -68,9 +55,6 @@ Non-comprehensive list of changes in this release
 Changes to the LLVM IR
 ----------------------
 
-* The signatures for the builtins @llvm.memcpy, @llvm.memmove, and @llvm.memset
-  have changed. Alignment is no longer an argument, and are instead conveyed as
-  parameter attributes.
 
 Changes to the ARM Backend
 --------------------------
@@ -107,16 +91,16 @@ Changes to the AVR Target
 Changes to the OCaml bindings
 -----------------------------
 
- During this release ...
 
 
 Changes to the C API
 --------------------
 
- During this release ...
 
+Changes to the DAG infrastructure
+---------------------------------
 
-External Open Source Projects Using LLVM 7
+External Open Source Projects Using LLVM 8
 ==========================================
 
 * A project...

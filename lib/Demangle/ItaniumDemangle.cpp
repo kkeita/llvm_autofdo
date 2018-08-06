@@ -10,149 +10,28 @@
 // FIXME: (possibly) incomplete list of features that clang mangles that this
 // file does not yet support:
 //   - C++ modules TS
-//   - All C++14 and C++17 features
 
+#include "Compiler.h"
+#include "StringView.h"
+#include "Utility.h"
 #include "llvm/Demangle/Demangle.h"
 
-#include "llvm/Demangle/Compiler.h"
-
-#include <algorithm>
 #include <cassert>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <numeric>
+#include <utility>
 #include <vector>
 
-#ifdef _MSC_VER
-// snprintf is implemented in VS 2015
-#if _MSC_VER < 1900
-#define snprintf _snprintf_s
-#endif
-#endif
-
 namespace {
-
-class StringView {
-  const char *First;
-  const char *Last;
-
-public:
-  template <size_t N>
-  StringView(const char (&Str)[N]) : First(Str), Last(Str + N - 1) {}
-  StringView(const char *First_, const char *Last_) : First(First_), Last(Last_) {}
-  StringView() : First(nullptr), Last(nullptr) {}
-
-  StringView substr(size_t From, size_t To) {
-    if (To >= size())
-      To = size() - 1;
-    if (From >= size())
-      From = size() - 1;
-    return StringView(First + From, First + To);
-  }
-
-  StringView dropFront(size_t N) const {
-    if (N >= size())
-      N = size() - 1;
-    return StringView(First + N, Last);
-  }
-
-  bool startsWith(StringView Str) const {
-    if (Str.size() > size())
-      return false;
-    return std::equal(Str.begin(), Str.end(), begin());
-  }
-
-  const char &operator[](size_t Idx) const { return *(begin() + Idx); }
-
-  const char *begin() const { return First; }
-  const char *end() const { return Last; }
-  size_t size() const { return static_cast<size_t>(Last - First); }
-  bool empty() const { return First == Last; }
-};
-
-bool operator==(const StringView &LHS, const StringView &RHS) {
-  return LHS.size() == RHS.size() &&
-         std::equal(LHS.begin(), LHS.end(), RHS.begin());
-}
-
-// Stream that AST nodes write their string representation into after the AST
-// has been parsed.
-class OutputStream {
-  char *Buffer;
-  size_t CurrentPosition;
-  size_t BufferCapacity;
-
-  // Ensure there is at least n more positions in buffer.
-  void grow(size_t N) {
-    if (N + CurrentPosition >= BufferCapacity) {
-      BufferCapacity *= 2;
-      if (BufferCapacity < N + CurrentPosition)
-        BufferCapacity = N + CurrentPosition;
-      Buffer = static_cast<char *>(std::realloc(Buffer, BufferCapacity));
-    }
-  }
-
-public:
-  OutputStream(char *StartBuf, size_t Size)
-      : Buffer(StartBuf), CurrentPosition(0), BufferCapacity(Size) {}
-
-  /// If a ParameterPackExpansion (or similar type) is encountered, the offset
-  /// into the pack that we're currently printing.
-  unsigned CurrentPackIndex = std::numeric_limits<unsigned>::max();
-  unsigned CurrentPackMax = std::numeric_limits<unsigned>::max();
-
-  OutputStream &operator+=(StringView R) {
-    size_t Size = R.size();
-    if (Size == 0)
-      return *this;
-    grow(Size);
-    memmove(Buffer + CurrentPosition, R.begin(), Size);
-    CurrentPosition += Size;
-    return *this;
-  }
-
-  OutputStream &operator+=(char C) {
-    grow(1);
-    Buffer[CurrentPosition++] = C;
-    return *this;
-  }
-
-  size_t getCurrentPosition() const { return CurrentPosition; }
-  void setCurrentPosition(size_t NewPos) { CurrentPosition = NewPos; }
-
-  char back() const {
-    return CurrentPosition ? Buffer[CurrentPosition - 1] : '\0';
-  }
-
-  bool empty() const { return CurrentPosition == 0; }
-
-  char *getBuffer() { return Buffer; }
-  char *getBufferEnd() { return Buffer + CurrentPosition - 1; }
-  size_t getBufferCapacity() { return BufferCapacity; }
-};
-
-template <class T>
-class SwapAndRestore {
-  T &Restore;
-  T OriginalValue;
-public:
-  SwapAndRestore(T& Restore_, T NewVal)
-      : Restore(Restore_), OriginalValue(Restore) {
-    Restore = std::move(NewVal);
-  }
-  ~SwapAndRestore() { Restore = std::move(OriginalValue); }
-
-  SwapAndRestore(const SwapAndRestore &) = delete;
-  SwapAndRestore &operator=(const SwapAndRestore &) = delete;
-};
-
 // Base class of all AST nodes. The AST is built by the parser, then is
 // traversed by the printLeft/Right functions to produce a demangled string.
 class Node {
 public:
   enum Kind : unsigned char {
+    KNodeArrayNode,
     KDotSuffix,
     KVendorExtQualType,
     KQualType,
@@ -164,8 +43,7 @@ public:
     KEnableIfAttr,
     KObjCProtoName,
     KPointerType,
-    KLValueReferenceType,
-    KRValueReferenceType,
+    KReferenceType,
     KPointerToMemberType,
     KArrayType,
     KFunctionType,
@@ -176,7 +54,8 @@ public:
     KSpecialName,
     KCtorVtableSpecialName,
     KQualifiedName,
-    KEmptyName,
+    KNestedName,
+    KLocalName,
     KVectorType,
     KParameterPack,
     KTemplateArgumentPack,
@@ -245,6 +124,12 @@ public:
   virtual bool hasArraySlow(OutputStream &) const { return false; }
   virtual bool hasFunctionSlow(OutputStream &) const { return false; }
 
+  // Dig through "glue" nodes like ParameterPack and ForwardTemplateReference to
+  // get at a node that actually represents some concrete syntax.
+  virtual const Node *getSyntaxNode(OutputStream &) const {
+    return this;
+  }
+
   void print(OutputStream &S) const {
     printLeft(S);
     if (RHSComponentCache != Cache::No)
@@ -257,7 +142,7 @@ public:
   // Print the "right". This distinction is necessary to represent C++ types
   // that appear on the RHS of their subtype, such as arrays or functions.
   // Since most types don't have such a component, provide a default
-  // implemenation.
+  // implementation.
   virtual void printRight(OutputStream &) const {}
 
   virtual StringView getBaseName() const { return StringView(); }
@@ -312,6 +197,14 @@ public:
 
       FirstElement = false;
     }
+  }
+};
+
+struct NodeArrayNode : Node {
+  NodeArray Array;
+  NodeArrayNode(NodeArray Array_) : Node(KNodeArrayNode), Array(Array_) {}
+  void printLeft(OutputStream &S) const override {
+    Array.printWithComma(S);
   }
 };
 
@@ -454,11 +347,11 @@ public:
   }
 };
 
-class AbiTagAttr final : public Node {
-  const Node* Base;
+struct AbiTagAttr : Node {
+  Node *Base;
   StringView Tag;
-public:
-  AbiTagAttr(const Node* Base_, StringView Tag_)
+
+  AbiTagAttr(Node* Base_, StringView Tag_)
       : Node(KAbiTagAttr, Base_->RHSComponentCache,
              Base_->ArrayCache, Base_->FunctionCache),
         Base(Base_), Tag(Tag_) {}
@@ -547,60 +440,64 @@ public:
   }
 };
 
-class LValueReferenceType final : public Node {
-  const Node *Pointee;
-
-public:
-  LValueReferenceType(Node *Pointee_)
-      : Node(KLValueReferenceType, Pointee_->RHSComponentCache),
-        Pointee(Pointee_) {}
-
-  bool hasRHSComponentSlow(OutputStream &S) const override {
-    return Pointee->hasRHSComponent(S);
-  }
-
-  void printLeft(OutputStream &s) const override {
-    Pointee->printLeft(s);
-    if (Pointee->hasArray(s))
-      s += " ";
-    if (Pointee->hasArray(s) || Pointee->hasFunction(s))
-      s += "(&";
-    else
-      s += "&";
-  }
-  void printRight(OutputStream &s) const override {
-    if (Pointee->hasArray(s) || Pointee->hasFunction(s))
-      s += ")";
-    Pointee->printRight(s);
-  }
+enum class ReferenceKind {
+  LValue,
+  RValue,
 };
 
-class RValueReferenceType final : public Node {
+// Represents either a LValue or an RValue reference type.
+class ReferenceType : public Node {
   const Node *Pointee;
+  ReferenceKind RK;
+
+  mutable bool Printing = false;
+
+  // Dig through any refs to refs, collapsing the ReferenceTypes as we go. The
+  // rule here is rvalue ref to rvalue ref collapses to a rvalue ref, and any
+  // other combination collapses to a lvalue ref.
+  std::pair<ReferenceKind, const Node *> collapse(OutputStream &S) const {
+    auto SoFar = std::make_pair(RK, Pointee);
+    for (;;) {
+      const Node *SN = SoFar.second->getSyntaxNode(S);
+      if (SN->getKind() != KReferenceType)
+        break;
+      auto *RT = static_cast<const ReferenceType *>(SN);
+      SoFar.second = RT->Pointee;
+      SoFar.first = std::min(SoFar.first, RT->RK);
+    }
+    return SoFar;
+  }
 
 public:
-  RValueReferenceType(Node *Pointee_)
-      : Node(KRValueReferenceType, Pointee_->RHSComponentCache),
-        Pointee(Pointee_) {}
+  ReferenceType(Node *Pointee_, ReferenceKind RK_)
+      : Node(KReferenceType, Pointee_->RHSComponentCache),
+        Pointee(Pointee_), RK(RK_) {}
 
   bool hasRHSComponentSlow(OutputStream &S) const override {
     return Pointee->hasRHSComponent(S);
   }
 
   void printLeft(OutputStream &s) const override {
-    Pointee->printLeft(s);
-    if (Pointee->hasArray(s))
+    if (Printing)
+      return;
+    SwapAndRestore<bool> SavePrinting(Printing, true);
+    std::pair<ReferenceKind, const Node *> Collapsed = collapse(s);
+    Collapsed.second->printLeft(s);
+    if (Collapsed.second->hasArray(s))
       s += " ";
-    if (Pointee->hasArray(s) || Pointee->hasFunction(s))
-      s += "(&&";
-    else
-      s += "&&";
-  }
+    if (Collapsed.second->hasArray(s) || Collapsed.second->hasFunction(s))
+      s += "(";
 
+    s += (Collapsed.first == ReferenceKind::LValue ? "&" : "&&");
+  }
   void printRight(OutputStream &s) const override {
-    if (Pointee->hasArray(s) || Pointee->hasFunction(s))
+    if (Printing)
+      return;
+    SwapAndRestore<bool> SavePrinting(Printing, true);
+    std::pair<ReferenceKind, const Node *> Collapsed = collapse(s);
+    if (Collapsed.second->hasArray(s) || Collapsed.second->hasFunction(s))
       s += ")";
-    Pointee->printRight(s);
+    Collapsed.second->printRight(s);
   }
 };
 
@@ -725,7 +622,7 @@ public:
   bool hasRHSComponentSlow(OutputStream &) const override { return true; }
   bool hasFunctionSlow(OutputStream &) const override { return true; }
 
-  // Handle C++'s ... quirky decl grammer by using the left & right
+  // Handle C++'s ... quirky decl grammar by using the left & right
   // distinction. Consider:
   //   int (*f(float))(char) {}
   // f is a function that takes a float and returns a pointer to a function
@@ -788,8 +685,8 @@ public:
 };
 
 class FunctionEncoding final : public Node {
-  const Node *Ret;
-  const Node *Name;
+  Node *Ret;
+  Node *Name;
   NodeArray Params;
   Node *Attrs;
   Qualifiers CVQuals;
@@ -803,6 +700,11 @@ public:
              /*FunctionCache=*/Cache::Yes),
         Ret(Ret_), Name(Name_), Params(Params_), Attrs(Attrs_),
         CVQuals(CVQuals_), RefQual(RefQual_) {}
+
+  Qualifiers getCVQuals() const { return CVQuals; }
+  FunctionRefQual getRefQual() const { return RefQual; }
+  NodeArray getParams() const { return Params; }
+  Node *getReturnType() const { return Ret; }
 
   bool hasRHSComponentSlow(OutputStream &) const override { return true; }
   bool hasFunctionSlow(OutputStream &) const override { return true; }
@@ -885,6 +787,36 @@ public:
   }
 };
 
+struct NestedName : Node {
+  Node *Qual;
+  Node *Name;
+
+  NestedName(Node *Qual_, Node *Name_)
+      : Node(KNestedName), Qual(Qual_), Name(Name_) {}
+
+  StringView getBaseName() const override { return Name->getBaseName(); }
+
+  void printLeft(OutputStream &S) const override {
+    Qual->print(S);
+    S += "::";
+    Name->print(S);
+  }
+};
+
+struct LocalName : Node {
+  Node *Encoding;
+  Node *Entity;
+
+  LocalName(Node *Encoding_, Node *Entity_)
+      : Node(KLocalName), Encoding(Encoding_), Entity(Entity_) {}
+
+  void printLeft(OutputStream &S) const override {
+    Encoding->print(S);
+    S += "::";
+    Entity->print(S);
+  }
+};
+
 class QualifiedName final : public Node {
   // qualifier::name
   const Node *Qualifier;
@@ -901,12 +833,6 @@ public:
     S += "::";
     Name->print(S);
   }
-};
-
-class EmptyName : public Node {
-public:
-  EmptyName() : Node(KEmptyName) {}
-  void printLeft(OutputStream &) const override {}
 };
 
 class VectorType final : public Node {
@@ -990,6 +916,11 @@ public:
     size_t Idx = S.CurrentPackIndex;
     return Idx < Data.size() && Data[Idx]->hasFunction(S);
   }
+  const Node *getSyntaxNode(OutputStream &S) const override {
+    initializePackExpansion(S);
+    size_t Idx = S.CurrentPackIndex;
+    return Idx < Data.size() ? Data[Idx]->getSyntaxNode(S) : this;
+  }
 
   void printLeft(OutputStream &S) const override {
     initializePackExpansion(S);
@@ -1005,7 +936,7 @@ public:
   }
 };
 
-/// A variadic template argument. This node represents an occurance of
+/// A variadic template argument. This node represents an occurrence of
 /// J<something>E in some <template-args>. It isn't itself unexpanded, unless
 /// one of it's Elements is. The parser inserts a ParameterPack into the
 /// TemplateParams table if the <template-args> this pack belongs to apply to an
@@ -1117,6 +1048,12 @@ struct ForwardTemplateReference : Node {
     SwapAndRestore<bool> SavePrinting(Printing, true);
     return Ref->hasFunction(S);
   }
+  const Node *getSyntaxNode(OutputStream &S) const override {
+    if (Printing)
+      return this;
+    SwapAndRestore<bool> SavePrinting(Printing, true);
+    return Ref->getSyntaxNode(S);
+  }
 
   void printLeft(OutputStream &S) const override {
     if (Printing)
@@ -1132,12 +1069,11 @@ struct ForwardTemplateReference : Node {
   }
 };
 
-class NameWithTemplateArgs final : public Node {
+struct NameWithTemplateArgs : Node {
   // name<template_args>
   Node *Name;
   Node *TemplateArgs;
 
-public:
   NameWithTemplateArgs(Node *Name_, Node *TemplateArgs_)
       : Node(KNameWithTemplateArgs), Name(Name_), TemplateArgs(TemplateArgs_) {}
 
@@ -1164,10 +1100,9 @@ public:
   }
 };
 
-class StdQualifiedName final : public Node {
+struct StdQualifiedName : Node {
   Node *Child;
 
-public:
   StdQualifiedName(Node *Child_) : Node(KStdQualifiedName), Child(Child_) {}
 
   StringView getBaseName() const override { return Child->getBaseName(); }
@@ -1678,6 +1613,55 @@ public:
   }
 };
 
+struct FoldExpr : Expr {
+  Node *Pack, *Init;
+  StringView OperatorName;
+  bool IsLeftFold;
+
+  FoldExpr(bool IsLeftFold_, StringView OperatorName_, Node *Pack_, Node *Init_)
+      : Pack(Pack_), Init(Init_), OperatorName(OperatorName_),
+        IsLeftFold(IsLeftFold_) {}
+
+  void printLeft(OutputStream &S) const override {
+    auto PrintPack = [&] {
+      S += '(';
+      ParameterPackExpansion(Pack).print(S);
+      S += ')';
+    };
+
+    S += '(';
+
+    if (IsLeftFold) {
+      // init op ... op pack
+      if (Init != nullptr) {
+        Init->print(S);
+        S += ' ';
+        S += OperatorName;
+        S += ' ';
+      }
+      // ... op pack
+      S += "... ";
+      S += OperatorName;
+      S += ' ';
+      PrintPack();
+    } else { // !IsLeftFold
+      // pack op ...
+      PrintPack();
+      S += ' ';
+      S += OperatorName;
+      S += " ...";
+      // pack op ... op init
+      if (Init != nullptr) {
+        S += ' ';
+        S += OperatorName;
+        S += ' ';
+        Init->print(S);
+      }
+    }
+    S += ')';
+  }
+};
+
 class ThrowExpr : public Expr {
   const Node *Op;
 
@@ -1791,17 +1775,21 @@ class BumpPointerAllocator {
   static constexpr size_t AllocSize = 4096;
   static constexpr size_t UsableAllocSize = AllocSize - sizeof(BlockMeta);
 
-  alignas(16) char InitialBuffer[AllocSize];
+  alignas(long double) char InitialBuffer[AllocSize];
   BlockMeta* BlockList = nullptr;
 
   void grow() {
-    char* NewMeta = new char[AllocSize];
+    char* NewMeta = static_cast<char *>(std::malloc(AllocSize));
+    if (NewMeta == nullptr)
+      std::terminate();
     BlockList = new (NewMeta) BlockMeta{BlockList, 0};
   }
 
   void* allocateMassive(size_t NBytes) {
     NBytes += sizeof(BlockMeta);
-    BlockMeta* NewMeta = reinterpret_cast<BlockMeta*>(new char[NBytes]);
+    BlockMeta* NewMeta = reinterpret_cast<BlockMeta*>(std::malloc(NBytes));
+    if (NewMeta == nullptr)
+      std::terminate();
     BlockList->Next = new (NewMeta) BlockMeta{BlockList->Next, 0};
     return static_cast<void*>(NewMeta + 1);
   }
@@ -1822,14 +1810,17 @@ public:
                               BlockList->Current - N);
   }
 
-  ~BumpPointerAllocator() {
+  void reset() {
     while (BlockList) {
       BlockMeta* Tmp = BlockList;
       BlockList = BlockList->Next;
       if (reinterpret_cast<char*>(Tmp) != InitialBuffer)
-        delete[] reinterpret_cast<char*>(Tmp);
+        std::free(Tmp);
     }
+    BlockList = new (InitialBuffer) BlockMeta{nullptr, 0};
   }
+
+  ~BumpPointerAllocator() { reset(); }
 };
 
 template <class T, size_t N>
@@ -1854,10 +1845,15 @@ class PODSmallVector {
     size_t S = size();
     if (isInline()) {
       auto* Tmp = static_cast<T*>(std::malloc(NewCap * sizeof(T)));
+      if (Tmp == nullptr)
+        std::terminate();
       std::copy(First, Last, Tmp);
       First = Tmp;
-    } else
+    } else {
       First = static_cast<T*>(std::realloc(First, NewCap * sizeof(T)));
+      if (First == nullptr)
+        std::terminate();
+    }
     Last = First + S;
     Cap = First + NewCap;
   }
@@ -1951,7 +1947,7 @@ struct Db {
   const char *Last;
 
   // Name stack, this is used by the parser to hold temporary names that were
-  // parsed. The parser colapses multiple names into new nodes to construct
+  // parsed. The parser collapses multiple names into new nodes to construct
   // the AST. Once the parser is finished, names.size() == 1.
   PODSmallVector<Node *, 32> Names;
 
@@ -1976,6 +1972,18 @@ struct Db {
   BumpPointerAllocator ASTAllocator;
 
   Db(const char *First_, const char *Last_) : First(First_), Last(Last_) {}
+
+  void reset(const char *First_, const char *Last_) {
+    First = First_;
+    Last = Last_;
+    Names.clear();
+    Subs.clear();
+    TemplateParams.clear();
+    ParsingLambdaParams = false;
+    TryToParseTemplateArgs = true;
+    PermitForwardTemplateReferences = false;
+    ASTAllocator.reset();
+  }
 
   template <class T, class... Args> T *make(Args &&... args) {
     return new (ASTAllocator.allocate(sizeof(T)))
@@ -2046,6 +2054,7 @@ struct Db {
   Node *parseNewExpr();
   Node *parseConversionExpr();
   Node *parseBracedExpr();
+  Node *parseFoldExpr();
 
   /// Parse the <type> production.
   Node *parseType();
@@ -2170,7 +2179,7 @@ Node *Db::parseLocalName(NameState *State) {
 
   if (consumeIf('s')) {
     First = parse_discriminator(First, Last);
-    return make<QualifiedName>(Encoding, make<NameType>("string literal"));
+    return make<LocalName>(Encoding, make<NameType>("string literal"));
   }
 
   if (consumeIf('d')) {
@@ -2180,14 +2189,14 @@ Node *Db::parseLocalName(NameState *State) {
     Node *N = parseName(State);
     if (N == nullptr)
       return nullptr;
-    return make<QualifiedName>(Encoding, N);
+    return make<LocalName>(Encoding, N);
   }
 
   Node *Entity = parseName(State);
   if (Entity == nullptr)
     return nullptr;
   First = parse_discriminator(First, Last);
-  return make<QualifiedName>(Encoding, Entity);
+  return make<LocalName>(Encoding, Entity);
 }
 
 // <unscoped-name> ::= <unqualified-name>
@@ -2622,6 +2631,8 @@ Node *Db::parseCtorDtorName(Node *&SoFar, NameState *State) {
 //          ::= <prefix> <data-member-prefix>
 //  extension ::= L
 //
+// <data-member-prefix> := <member source-name> [<template-args>] M
+//
 // <template-prefix> ::= <prefix> <template unqualified-name>
 //                   ::= <template-param>
 //                   ::= <substitution>
@@ -2641,7 +2652,7 @@ Node *Db::parseNestedName(NameState *State) {
 
   Node *SoFar = nullptr;
   auto PushComponent = [&](Node *Comp) {
-    if (SoFar) SoFar = make<QualifiedName>(SoFar, Comp);
+    if (SoFar) SoFar = make<NestedName>(SoFar, Comp);
     else       SoFar = Comp;
     if (State) State->EndsWithTemplateArgs = false;
   };
@@ -2651,6 +2662,13 @@ Node *Db::parseNestedName(NameState *State) {
 
   while (!consumeIf('E')) {
     consumeIf('L'); // extension
+
+    // <data-member-prefix> := <member source-name> [<template-args>] M
+    if (consumeIf('M')) {
+      if (SoFar == nullptr)
+        return nullptr;
+      continue;
+    }
 
     //          ::= <template-param>
     if (look() == 'T') {
@@ -2803,7 +2821,7 @@ Node *Db::parseBaseUnresolvedName() {
 // <unresolved-name>
 //  extension        ::= srN <unresolved-type> [<template-args>] <unresolved-qualifier-level>* E <base-unresolved-name>
 //                   ::= [gs] <base-unresolved-name>                     # x or (with "gs") ::x
-//                   ::= [gs] sr <unresolved-qualifier-level>+ E <base-unresolved-name>  
+//                   ::= [gs] sr <unresolved-qualifier-level>+ E <base-unresolved-name>
 //                                                                       # A::x, N::y, A<T>::z; "gs" means leading "::"
 //                   ::= sr <unresolved-type> <base-unresolved-name>     # T::x / decltype(p)::x
 //  extension        ::= sr <unresolved-type> <template-args> <base-unresolved-name>
@@ -2853,7 +2871,7 @@ Node *Db::parseUnresolvedName() {
     return SoFar;
   }
 
-  // [gs] sr <unresolved-qualifier-level>+ E   <base-unresolved-name>  
+  // [gs] sr <unresolved-qualifier-level>+ E   <base-unresolved-name>
   if (std::isdigit(look())) {
     do {
       Node *Qual = parseSimpleId();
@@ -3434,7 +3452,7 @@ Node *Db::parseType() {
     Node *Ref = parseType();
     if (Ref == nullptr)
       return nullptr;
-    Result = make<LValueReferenceType>(Ref);
+    Result = make<ReferenceType>(Ref, ReferenceKind::LValue);
     break;
   }
   //             ::= O <type>        # r-value reference (C++11)
@@ -3443,7 +3461,7 @@ Node *Db::parseType() {
     Node *Ref = parseType();
     if (Ref == nullptr)
       return nullptr;
-    Result = make<RValueReferenceType>(Ref);
+    Result = make<ReferenceType>(Ref, ReferenceKind::RValue);
     break;
   }
   //             ::= C <type>        # complex pair (C99)
@@ -3781,6 +3799,76 @@ Node *Db::parseBracedExpr() {
   return parseExpr();
 }
 
+// (not yet in the spec)
+// <fold-expr> ::= fL <binary-operator-name> <expression> <expression>
+//             ::= fR <binary-operator-name> <expression> <expression>
+//             ::= fl <binary-operator-name> <expression>
+//             ::= fr <binary-operator-name> <expression>
+Node *Db::parseFoldExpr() {
+  if (!consumeIf('f'))
+    return nullptr;
+
+  char FoldKind = look();
+  bool IsLeftFold, HasInitializer;
+  HasInitializer = FoldKind == 'L' || FoldKind == 'R';
+  if (FoldKind == 'l' || FoldKind == 'L')
+    IsLeftFold = true;
+  else if (FoldKind == 'r' || FoldKind == 'R')
+    IsLeftFold = false;
+  else
+    return nullptr;
+  ++First;
+
+  // FIXME: This map is duplicated in parseOperatorName and parseExpr.
+  StringView OperatorName;
+  if      (consumeIf("aa")) OperatorName = "&&";
+  else if (consumeIf("an")) OperatorName = "&";
+  else if (consumeIf("aN")) OperatorName = "&=";
+  else if (consumeIf("aS")) OperatorName = "=";
+  else if (consumeIf("cm")) OperatorName = ",";
+  else if (consumeIf("ds")) OperatorName = ".*";
+  else if (consumeIf("dv")) OperatorName = "/";
+  else if (consumeIf("dV")) OperatorName = "/=";
+  else if (consumeIf("eo")) OperatorName = "^";
+  else if (consumeIf("eO")) OperatorName = "^=";
+  else if (consumeIf("eq")) OperatorName = "==";
+  else if (consumeIf("ge")) OperatorName = ">=";
+  else if (consumeIf("gt")) OperatorName = ">";
+  else if (consumeIf("le")) OperatorName = "<=";
+  else if (consumeIf("ls")) OperatorName = "<<";
+  else if (consumeIf("lS")) OperatorName = "<<=";
+  else if (consumeIf("lt")) OperatorName = "<";
+  else if (consumeIf("mi")) OperatorName = "-";
+  else if (consumeIf("mI")) OperatorName = "-=";
+  else if (consumeIf("ml")) OperatorName = "*";
+  else if (consumeIf("mL")) OperatorName = "*=";
+  else if (consumeIf("ne")) OperatorName = "!=";
+  else if (consumeIf("oo")) OperatorName = "||";
+  else if (consumeIf("or")) OperatorName = "|";
+  else if (consumeIf("oR")) OperatorName = "|=";
+  else if (consumeIf("pl")) OperatorName = "+";
+  else if (consumeIf("pL")) OperatorName = "+=";
+  else if (consumeIf("rm")) OperatorName = "%";
+  else if (consumeIf("rM")) OperatorName = "%=";
+  else if (consumeIf("rs")) OperatorName = ">>";
+  else if (consumeIf("rS")) OperatorName = ">>=";
+  else return nullptr;
+
+  Node *Pack = parseExpr(), *Init = nullptr;
+  if (Pack == nullptr)
+    return nullptr;
+  if (HasInitializer) {
+    Init = parseExpr();
+    if (Init == nullptr)
+      return nullptr;
+  }
+
+  if (IsLeftFold && Init)
+    std::swap(Pack, Init);
+
+  return make<FoldExpr>(IsLeftFold, OperatorName, Pack, Init);
+}
+
 // <expression> ::= <unary operator-name> <expression>
 //              ::= <binary operator-name> <expression> <expression>
 //              ::= <ternary operator-name> <expression> <expression> <expression>
@@ -3813,6 +3901,7 @@ Node *Db::parseBracedExpr() {
 //              ::= ds <expression> <expression>                         # expr.*expr
 //              ::= sZ <template-param>                                  # size of a parameter pack
 //              ::= sZ <function-param>                                  # size of a function parameter pack
+//              ::= sP <template-arg>* E                                 # sizeof...(T), size of a captured template parameter pack from an alias template
 //              ::= sp <expression>                                      # pack expansion
 //              ::= tw <expression>                                      # throw expression
 //              ::= tr                                                   # throw with no operand (rethrow)
@@ -3834,8 +3923,12 @@ Node *Db::parseExpr() {
     return parseExprPrimary();
   case 'T':
     return parseTemplateParam();
-  case 'f':
-    return parseFunctionParam();
+  case 'f': {
+    // Disambiguate a fold expression from a <function-param>.
+    if (look(1) == 'p' || (look(1) == 'L' && std::isdigit(look(2))))
+      return parseFunctionParam();
+    return parseFoldExpr();
+  }
   case 'a':
     switch (First[1]) {
     case 'a':
@@ -4213,9 +4306,22 @@ Node *Db::parseExpr() {
         Node *FP = parseFunctionParam();
         if (FP == nullptr)
           return nullptr;
-        return make<EnclosingExpr>("sizeof...", FP, ")");
+        return make<EnclosingExpr>("sizeof... (", FP, ")");
       }
       return nullptr;
+    case 'P': {
+      First += 2;
+      size_t ArgsBegin = Names.size();
+      while (!consumeIf('E')) {
+        Node *Arg = parseTemplateArg();
+        if (Arg == nullptr)
+          return nullptr;
+        Names.push_back(Arg);
+      }
+      return make<EnclosingExpr>(
+          "sizeof... (", make<NodeArrayNode>(popTrailingNodeArray(ArgsBegin)),
+          ")");
+    }
     }
     return nullptr;
   case 't':
@@ -4818,6 +4924,8 @@ Node *Db::parse() {
     bool RequireNumber = consumeIf('_');
     if (parseNumber().empty() && RequireNumber)
       return nullptr;
+    if (look() == '.')
+      First = Last;
     if (numLeft() != 0)
       return nullptr;
     return make<SpecialName>("invocation function for block in ", Encoding);
@@ -4828,54 +4936,275 @@ Node *Db::parse() {
     return nullptr;
   return Ty;
 }
-}  // unnamed namespace
 
-enum {
-  unknown_error = -4,
-  invalid_args = -3,
-  invalid_mangled_name = -2,
-  memory_alloc_failure = -1,
-  success = 0,
-};
+bool initializeOutputStream(char *Buf, size_t *N, OutputStream &S,
+                            size_t InitSize) {
+  size_t BufferSize;
+  if (Buf == nullptr) {
+    Buf = static_cast<char *>(std::malloc(InitSize));
+    if (Buf == nullptr)
+      return true;
+    BufferSize = InitSize;
+  } else
+    BufferSize = *N;
+
+  S.reset(Buf, BufferSize);
+  return false;
+}
+
+}  // unnamed namespace
 
 char *llvm::itaniumDemangle(const char *MangledName, char *Buf,
                             size_t *N, int *Status) {
   if (MangledName == nullptr || (Buf != nullptr && N == nullptr)) {
     if (Status)
-      *Status = invalid_args;
+      *Status = demangle_invalid_args;
     return nullptr;
   }
 
-  size_t BufSize = Buf != nullptr ? *N : 0;
-  int InternalStatus = success;
-  size_t MangledNameLength = std::strlen(MangledName);
+  int InternalStatus = demangle_success;
+  Db Parser(MangledName, MangledName + std::strlen(MangledName));
+  OutputStream S;
 
-  Db Parser(MangledName, MangledName + MangledNameLength);
   Node *AST = Parser.parse();
 
   if (AST == nullptr)
-    InternalStatus = invalid_mangled_name;
-
-  if (InternalStatus == success) {
+    InternalStatus = demangle_invalid_mangled_name;
+  else if (initializeOutputStream(Buf, N, S, 1024))
+    InternalStatus = demangle_memory_alloc_failure;
+  else {
     assert(Parser.ForwardTemplateRefs.empty());
-
-    if (Buf == nullptr) {
-      BufSize = 1024;
-      Buf = static_cast<char*>(std::malloc(BufSize));
-    }
-
-    if (Buf) {
-      OutputStream Stream(Buf, BufSize);
-      AST->print(Stream);
-      Stream += '\0';
-      if (N != nullptr)
-        *N = Stream.getCurrentPosition();
-      Buf = Stream.getBuffer();
-    } else
-      InternalStatus = memory_alloc_failure;
+    AST->print(S);
+    S += '\0';
+    if (N != nullptr)
+      *N = S.getCurrentPosition();
+    Buf = S.getBuffer();
   }
 
   if (Status)
     *Status = InternalStatus;
-  return InternalStatus == success ? Buf : nullptr;
+  return InternalStatus == demangle_success ? Buf : nullptr;
+}
+
+namespace llvm {
+
+ItaniumPartialDemangler::ItaniumPartialDemangler()
+    : RootNode(nullptr), Context(new Db{nullptr, nullptr}) {}
+
+ItaniumPartialDemangler::~ItaniumPartialDemangler() {
+  delete static_cast<Db *>(Context);
+}
+
+ItaniumPartialDemangler::ItaniumPartialDemangler(
+    ItaniumPartialDemangler &&Other)
+    : RootNode(Other.RootNode), Context(Other.Context) {
+  Other.Context = Other.RootNode = nullptr;
+}
+
+ItaniumPartialDemangler &ItaniumPartialDemangler::
+operator=(ItaniumPartialDemangler &&Other) {
+  std::swap(RootNode, Other.RootNode);
+  std::swap(Context, Other.Context);
+  return *this;
+}
+
+// Demangle MangledName into an AST, storing it into this->RootNode.
+bool ItaniumPartialDemangler::partialDemangle(const char *MangledName) {
+  Db *Parser = static_cast<Db *>(Context);
+  size_t Len = std::strlen(MangledName);
+  Parser->reset(MangledName, MangledName + Len);
+  RootNode = Parser->parse();
+  return RootNode == nullptr;
+}
+
+static char *printNode(Node *RootNode, char *Buf, size_t *N) {
+  OutputStream S;
+  if (initializeOutputStream(Buf, N, S, 128))
+    return nullptr;
+  RootNode->print(S);
+  S += '\0';
+  if (N != nullptr)
+    *N = S.getCurrentPosition();
+  return S.getBuffer();
+}
+
+char *ItaniumPartialDemangler::getFunctionBaseName(char *Buf, size_t *N) const {
+  if (!isFunction())
+    return nullptr;
+
+  Node *Name = static_cast<FunctionEncoding *>(RootNode)->getName();
+
+  while (true) {
+    switch (Name->getKind()) {
+    case Node::KAbiTagAttr:
+      Name = static_cast<AbiTagAttr *>(Name)->Base;
+      continue;
+    case Node::KStdQualifiedName:
+      Name = static_cast<StdQualifiedName *>(Name)->Child;
+      continue;
+    case Node::KNestedName:
+      Name = static_cast<NestedName *>(Name)->Name;
+      continue;
+    case Node::KLocalName:
+      Name = static_cast<LocalName *>(Name)->Entity;
+      continue;
+    case Node::KNameWithTemplateArgs:
+      Name = static_cast<NameWithTemplateArgs *>(Name)->Name;
+      continue;
+    default:
+      return printNode(Name, Buf, N);
+    }
+  }
+}
+
+char *ItaniumPartialDemangler::getFunctionDeclContextName(char *Buf,
+                                                          size_t *N) const {
+  if (!isFunction())
+    return nullptr;
+  Node *Name = static_cast<FunctionEncoding *>(RootNode)->getName();
+
+  OutputStream S;
+  if (initializeOutputStream(Buf, N, S, 128))
+    return nullptr;
+
+ KeepGoingLocalFunction:
+  while (true) {
+    if (Name->getKind() == Node::KAbiTagAttr) {
+      Name = static_cast<AbiTagAttr *>(Name)->Base;
+      continue;
+    }
+    if (Name->getKind() == Node::KNameWithTemplateArgs) {
+      Name = static_cast<NameWithTemplateArgs *>(Name)->Name;
+      continue;
+    }
+    break;
+  }
+
+  switch (Name->getKind()) {
+  case Node::KStdQualifiedName:
+    S += "std";
+    break;
+  case Node::KNestedName:
+    static_cast<NestedName *>(Name)->Qual->print(S);
+    break;
+  case Node::KLocalName: {
+    auto *LN = static_cast<LocalName *>(Name);
+    LN->Encoding->print(S);
+    S += "::";
+    Name = LN->Entity;
+    goto KeepGoingLocalFunction;
+  }
+  default:
+    break;
+  }
+  S += '\0';
+  if (N != nullptr)
+    *N = S.getCurrentPosition();
+  return S.getBuffer();
+}
+
+char *ItaniumPartialDemangler::getFunctionName(char *Buf, size_t *N) const {
+  if (!isFunction())
+    return nullptr;
+  auto *Name = static_cast<FunctionEncoding *>(RootNode)->getName();
+  return printNode(Name, Buf, N);
+}
+
+char *ItaniumPartialDemangler::getFunctionParameters(char *Buf,
+                                                     size_t *N) const {
+  if (!isFunction())
+    return nullptr;
+  NodeArray Params = static_cast<FunctionEncoding *>(RootNode)->getParams();
+
+  OutputStream S;
+  if (initializeOutputStream(Buf, N, S, 128))
+    return nullptr;
+
+  S += '(';
+  Params.printWithComma(S);
+  S += ')';
+  S += '\0';
+  if (N != nullptr)
+    *N = S.getCurrentPosition();
+  return S.getBuffer();
+}
+
+char *ItaniumPartialDemangler::getFunctionReturnType(
+    char *Buf, size_t *N) const {
+  if (!isFunction())
+    return nullptr;
+
+  OutputStream S;
+  if (initializeOutputStream(Buf, N, S, 128))
+    return nullptr;
+
+  if (Node *Ret = static_cast<FunctionEncoding *>(RootNode)->getReturnType())
+    Ret->print(S);
+
+  S += '\0';
+  if (N != nullptr)
+    *N = S.getCurrentPosition();
+  return S.getBuffer();
+}
+
+char *ItaniumPartialDemangler::finishDemangle(char *Buf, size_t *N) const {
+  assert(RootNode != nullptr && "must call partialDemangle()");
+  return printNode(static_cast<Node *>(RootNode), Buf, N);
+}
+
+bool ItaniumPartialDemangler::hasFunctionQualifiers() const {
+  assert(RootNode != nullptr && "must call partialDemangle()");
+  if (!isFunction())
+    return false;
+  auto *E = static_cast<FunctionEncoding *>(RootNode);
+  return E->getCVQuals() != QualNone || E->getRefQual() != FrefQualNone;
+}
+
+bool ItaniumPartialDemangler::isCtorOrDtor() const {
+  Node *N = static_cast<Node *>(RootNode);
+  while (N) {
+    switch (N->getKind()) {
+    default:
+      return false;
+    case Node::KCtorDtorName:
+      return true;
+
+    case Node::KAbiTagAttr:
+      N = static_cast<AbiTagAttr *>(N)->Base;
+      break;
+    case Node::KFunctionEncoding:
+      N = static_cast<FunctionEncoding *>(N)->getName();
+      break;
+    case Node::KLocalName:
+      N = static_cast<LocalName *>(N)->Entity;
+      break;
+    case Node::KNameWithTemplateArgs:
+      N = static_cast<NameWithTemplateArgs *>(N)->Name;
+      break;
+    case Node::KNestedName:
+      N = static_cast<NestedName *>(N)->Name;
+      break;
+    case Node::KStdQualifiedName:
+      N = static_cast<StdQualifiedName *>(N)->Child;
+      break;
+    }
+  }
+  return false;
+}
+
+bool ItaniumPartialDemangler::isFunction() const {
+  assert(RootNode != nullptr && "must call partialDemangle()");
+  return static_cast<Node *>(RootNode)->getKind() == Node::KFunctionEncoding;
+}
+
+bool ItaniumPartialDemangler::isSpecialName() const {
+  assert(RootNode != nullptr && "must call partialDemangle()");
+  auto K = static_cast<Node *>(RootNode)->getKind();
+  return K == Node::KSpecialName || K == Node::KCtorVtableSpecialName;
+}
+
+bool ItaniumPartialDemangler::isData() const {
+  return !isFunction() && !isSpecialName();
+}
+
 }

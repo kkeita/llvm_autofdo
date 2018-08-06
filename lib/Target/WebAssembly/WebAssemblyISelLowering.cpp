@@ -8,7 +8,7 @@
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// \brief This file implements the WebAssemblyTargetLowering class.
+/// This file implements the WebAssemblyTargetLowering class.
 ///
 //===----------------------------------------------------------------------===//
 
@@ -150,6 +150,9 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
 
   // Trap lowers to wasm unreachable
   setOperationAction(ISD::TRAP, MVT::Other, Legal);
+
+  // Exception handling intrinsics
+  setOperationAction(ISD::INTRINSIC_WO_CHAIN, MVT::Other, Custom);
 
   setMaxAtomicSizeInBitsSupported(64);
 }
@@ -426,6 +429,55 @@ bool WebAssemblyTargetLowering::isIntDivCheap(EVT VT,
   return true;
 }
 
+EVT WebAssemblyTargetLowering::getSetCCResultType(const DataLayout &DL,
+                                                  LLVMContext &C,
+                                                  EVT VT) const {
+  if (VT.isVector())
+    return VT.changeVectorElementTypeToInteger();
+
+  return TargetLowering::getSetCCResultType(DL, C, VT);
+}
+
+bool WebAssemblyTargetLowering::getTgtMemIntrinsic(IntrinsicInfo &Info,
+                                                   const CallInst &I,
+                                                   MachineFunction &MF,
+                                                   unsigned Intrinsic) const {
+  switch (Intrinsic) {
+  case Intrinsic::wasm_atomic_notify:
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
+    Info.memVT = MVT::i32;
+    Info.ptrVal = I.getArgOperand(0);
+    Info.offset = 0;
+    Info.align = 4;
+    // atomic.notify instruction does not really load the memory specified with
+    // this argument, but MachineMemOperand should either be load or store, so
+    // we set this to a load.
+    // FIXME Volatile isn't really correct, but currently all LLVM atomic
+    // instructions are treated as volatiles in the backend, so we should be
+    // consistent. The same applies for wasm_atomic_wait intrinsics too.
+    Info.flags = MachineMemOperand::MOVolatile | MachineMemOperand::MOLoad;
+    return true;
+  case Intrinsic::wasm_atomic_wait_i32:
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
+    Info.memVT = MVT::i32;
+    Info.ptrVal = I.getArgOperand(0);
+    Info.offset = 0;
+    Info.align = 4;
+    Info.flags = MachineMemOperand::MOVolatile | MachineMemOperand::MOLoad;
+    return true;
+  case Intrinsic::wasm_atomic_wait_i64:
+    Info.opc = ISD::INTRINSIC_W_CHAIN;
+    Info.memVT = MVT::i64;
+    Info.ptrVal = I.getArgOperand(0);
+    Info.offset = 0;
+    Info.align = 8;
+    Info.flags = MachineMemOperand::MOVolatile | MachineMemOperand::MOLoad;
+    return true;
+  default:
+    return false;
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // WebAssembly Lowering private implementation.
 //===----------------------------------------------------------------------===//
@@ -484,6 +536,7 @@ SDValue WebAssemblyTargetLowering::LowerCall(
 
   SmallVectorImpl<ISD::OutputArg> &Outs = CLI.Outs;
   SmallVectorImpl<SDValue> &OutVals = CLI.OutVals;
+  unsigned NumFixedArgs = 0;
   for (unsigned i = 0; i < Outs.size(); ++i) {
     const ISD::OutputArg &Out = Outs[i];
     SDValue &OutVal = OutVals[i];
@@ -509,11 +562,11 @@ SDValue WebAssemblyTargetLowering::LowerCall(
           /*isTailCall*/ false, MachinePointerInfo(), MachinePointerInfo());
       OutVal = FINode;
     }
+    // Count the number of fixed args *after* legalization.
+    NumFixedArgs += Out.IsFixed;
   }
 
   bool IsVarArg = CLI.IsVarArg;
-  unsigned NumFixedArgs = CLI.NumFixedArgs;
-
   auto PtrVT = getPointerTy(Layout);
 
   // Analyze operands of the call, assigning locations to each operand.
@@ -737,6 +790,8 @@ SDValue WebAssemblyTargetLowering::LowerOperation(SDValue Op,
       return LowerFRAMEADDR(Op, DAG);
     case ISD::CopyToReg:
       return LowerCopyToReg(Op, DAG);
+    case ISD::INTRINSIC_WO_CHAIN:
+      return LowerINTRINSIC_WO_CHAIN(Op, DAG);
   }
 }
 
@@ -816,7 +871,7 @@ SDValue WebAssemblyTargetLowering::LowerExternalSymbol(
   // functions.
   return DAG.getNode(WebAssemblyISD::Wrapper, DL, VT,
                      DAG.getTargetExternalSymbol(ES->getSymbol(), VT,
-                                                 /*TargetFlags=*/0x1));
+                                                 WebAssemblyII::MO_SYMBOL_FUNCTION));
 }
 
 SDValue WebAssemblyTargetLowering::LowerJumpTable(SDValue Op,
@@ -867,6 +922,21 @@ SDValue WebAssemblyTargetLowering::LowerVASTART(SDValue Op,
                                     MFI->getVarargBufferVreg(), PtrVT);
   return DAG.getStore(Op.getOperand(0), DL, ArgN, Op.getOperand(1),
                       MachinePointerInfo(SV), 0);
+}
+
+SDValue
+WebAssemblyTargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
+                                                   SelectionDAG &DAG) const {
+  unsigned IntNo = cast<ConstantSDNode>(Op.getOperand(0))->getZExtValue();
+  SDLoc DL(Op);
+  switch (IntNo) {
+  default:
+    return {}; // Don't custom lower most intrinsics.
+
+  case Intrinsic::wasm_lsda:
+    // TODO For now, just return 0 not to crash
+    return DAG.getConstant(0, DL, Op.getValueType());
+  }
 }
 
 //===----------------------------------------------------------------------===//

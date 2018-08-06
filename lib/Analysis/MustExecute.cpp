@@ -26,7 +26,7 @@ using namespace llvm;
 /// for the possibility of may throw exception.
 ///
 void llvm::computeLoopSafetyInfo(LoopSafetyInfo *SafetyInfo, Loop *CurLoop) {
-  assert(CurLoop != nullptr && "CurLoop cant be null");
+  assert(CurLoop != nullptr && "CurLoop can't be null");
   BasicBlock *Header = CurLoop->getHeader();
   // Setting default safety values.
   SafetyInfo->MayThrow = false;
@@ -52,7 +52,7 @@ void llvm::computeLoopSafetyInfo(LoopSafetyInfo *SafetyInfo, Loop *CurLoop) {
   Function *Fn = CurLoop->getHeader()->getParent();
   if (Fn->hasPersonalityFn())
     if (Constant *PersonalityFn = Fn->getPersonalityFn())
-      if (isFuncletEHPersonality(classifyEHPersonality(PersonalityFn)))
+      if (isScopedEHPersonality(classifyEHPersonality(PersonalityFn)))
         SafetyInfo->BlockColors = colorEHFunclets(*Fn);
 }
 
@@ -70,6 +70,10 @@ static bool CanProveNotTakenFirstIteration(BasicBlock *ExitBlock,
   auto *BI = dyn_cast<BranchInst>(CondExitBlock->getTerminator());
   if (!BI || !BI->isConditional())
     return false;
+  // If condition is constant and false leads to ExitBlock then we always
+  // execute the true branch.
+  if (auto *Cond = dyn_cast<ConstantInt>(BI->getCondition()))
+    return BI->getSuccessor(Cond->getZExtValue() ? 1 : 0) == ExitBlock;
   auto *Cond = dyn_cast<CmpInst>(BI->getCondition());
   if (!Cond)
     return false;
@@ -109,8 +113,11 @@ bool llvm::isGuaranteedToExecute(const Instruction &Inst,
   // is a common case, and can save some work, check it now.
   if (Inst.getParent() == CurLoop->getHeader())
     // If there's a throw in the header block, we can't guarantee we'll reach
-    // Inst.
-    return !SafetyInfo->HeaderMayThrow;
+    // Inst unless we can prove that Inst comes before the potential implicit
+    // exit.  At the moment, we use a (cheap) hack for the common case where
+    // the instruction of interest is the first one in the block.
+    return !SafetyInfo->HeaderMayThrow ||
+      Inst.getParent()->getFirstNonPHIOrDbg() == &Inst;
 
   // Somewhere in this loop there is an instruction which may throw and make us
   // exit the loop.
@@ -184,7 +191,7 @@ FunctionPass *llvm::createMustExecutePrinter() {
   return new MustExecutePrinter();
 }
 
-bool isMustExecuteIn(const Instruction &I, Loop *L, DominatorTree *DT) {
+static bool isMustExecuteIn(const Instruction &I, Loop *L, DominatorTree *DT) {
   // TODO: merge these two routines.  For the moment, we display the best
   // result obtained by *either* implementation.  This is a bit unfair since no
   // caller actually gets the full power at the moment.
@@ -194,7 +201,8 @@ bool isMustExecuteIn(const Instruction &I, Loop *L, DominatorTree *DT) {
     isGuaranteedToExecuteForEveryIteration(&I, L);
 }
 
-/// \brief An assembly annotator class to print must execute information in
+namespace {
+/// An assembly annotator class to print must execute information in
 /// comments.
 class MustExecuteAnnotatedWriter : public AssemblyAnnotationWriter {
   DenseMap<const Value*, SmallVector<Loop*, 4> > MustExec;
@@ -227,7 +235,7 @@ public:
   }
 
 
-  void printInfoComment(const Value &V, formatted_raw_ostream &OS) override {  
+  void printInfoComment(const Value &V, formatted_raw_ostream &OS) override {
     if (!MustExec.count(&V))
       return;
 
@@ -237,7 +245,7 @@ public:
       OS << " ; (mustexec in " << NumLoops << " loops: ";
     else
       OS << " ; (mustexec in: ";
-    
+
     bool first = true;
     for (const Loop *L : Loops) {
       if (!first)
@@ -248,6 +256,7 @@ public:
     OS << ")";
   }
 };
+} // namespace
 
 bool MustExecutePrinter::runOnFunction(Function &F) {
   auto &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
@@ -255,6 +264,6 @@ bool MustExecutePrinter::runOnFunction(Function &F) {
 
   MustExecuteAnnotatedWriter Writer(F, DT, LI);
   F.print(dbgs(), &Writer);
-  
+
   return false;
 }

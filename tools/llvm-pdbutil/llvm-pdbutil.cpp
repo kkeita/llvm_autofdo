@@ -20,10 +20,13 @@
 #include "InputFile.h"
 #include "LinePrinter.h"
 #include "OutputStyle.h"
+#include "PrettyClassDefinitionDumper.h"
 #include "PrettyCompilandDumper.h"
+#include "PrettyEnumDumper.h"
 #include "PrettyExternalSymbolDumper.h"
 #include "PrettyFunctionDumper.h"
 #include "PrettyTypeDumper.h"
+#include "PrettyTypedefDumper.h"
 #include "PrettyVariableDumper.h"
 #include "YAMLOutputStyle.h"
 
@@ -50,6 +53,7 @@
 #include "llvm/DebugInfo/PDB/IPDBSession.h"
 #include "llvm/DebugInfo/PDB/Native/DbiModuleDescriptorBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStreamBuilder.h"
+#include "llvm/DebugInfo/PDB/Native/InfoStream.h"
 #include "llvm/DebugInfo/PDB/Native/InfoStreamBuilder.h"
 #include "llvm/DebugInfo/PDB/Native/NativeSession.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
@@ -64,7 +68,11 @@
 #include "llvm/DebugInfo/PDB/PDBSymbolData.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolExe.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolFunc.h"
+#include "llvm/DebugInfo/PDB/PDBSymbolPublicSymbol.h"
 #include "llvm/DebugInfo/PDB/PDBSymbolThunk.h"
+#include "llvm/DebugInfo/PDB/PDBSymbolTypeEnum.h"
+#include "llvm/DebugInfo/PDB/PDBSymbolTypeTypedef.h"
+#include "llvm/DebugInfo/PDB/PDBSymbolTypeUDT.h"
 #include "llvm/Support/BinaryByteStream.h"
 #include "llvm/Support/COM.h"
 #include "llvm/Support/CommandLine.h"
@@ -72,6 +80,7 @@
 #include "llvm/Support/FileOutputBuffer.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/LineIterator.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -82,7 +91,6 @@
 #include "llvm/Support/ScopedPrinter.h"
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
-
 
 using namespace llvm;
 using namespace llvm::codeview;
@@ -114,6 +122,9 @@ cl::SubCommand MergeSubcommand("merge",
 
 cl::SubCommand ExplainSubcommand("explain",
                                  "Explain the meaning of a file offset");
+
+cl::SubCommand ExportSubcommand("export",
+                                "Write binary data from a stream to a file");
 
 cl::OptionCategory TypeCategory("Symbol Type Options");
 cl::OptionCategory FilterCategory("Filtering and Sorting Options");
@@ -156,6 +167,11 @@ cl::opt<bool> ShowInjectedSourceContent(
     "injected-source-content",
     cl::desc("When displaying an injected source, display the file content"),
     cl::cat(OtherOptions), cl::sub(PrettySubcommand));
+
+cl::list<std::string> WithName(
+    "with-name",
+    cl::desc("Display any symbol or type with the specified exact name"),
+    cl::cat(TypeCategory), cl::ZeroOrMore, cl::sub(PrettySubcommand));
 
 cl::opt<bool> Compilands("compilands", cl::desc("Display compilands"),
                          cl::cat(TypeCategory), cl::sub(PrettySubcommand));
@@ -454,6 +470,10 @@ cl::opt<bool> DumpPublics("publics", cl::desc("dump Publics stream data"),
 cl::opt<bool> DumpPublicExtras("public-extras",
                                cl::desc("dump Publics hashes and address maps"),
                                cl::cat(SymbolOptions), cl::sub(DumpSubcommand));
+cl::opt<bool>
+    DumpGSIRecords("gsi-records",
+                   cl::desc("dump public / global common record stream"),
+                   cl::cat(SymbolOptions), cl::sub(DumpSubcommand));
 cl::opt<bool> DumpSymbols("symbols", cl::desc("dump module symbols"),
                           cl::cat(SymbolOptions), cl::sub(DumpSubcommand));
 
@@ -617,7 +637,39 @@ cl::list<std::string> InputFilename(cl::Positional,
 
 cl::list<uint64_t> Offsets("offset", cl::desc("The file offset to explain"),
                            cl::sub(ExplainSubcommand), cl::OneOrMore);
+
+cl::opt<InputFileType> InputType(
+    "input-type", cl::desc("Specify how to interpret the input file"),
+    cl::init(InputFileType::PDBFile), cl::Optional, cl::sub(ExplainSubcommand),
+    cl::values(clEnumValN(InputFileType::PDBFile, "pdb-file",
+                          "Treat input as a PDB file (default)"),
+               clEnumValN(InputFileType::PDBStream, "pdb-stream",
+                          "Treat input as raw contents of PDB stream"),
+               clEnumValN(InputFileType::DBIStream, "dbi-stream",
+                          "Treat input as raw contents of DBI stream"),
+               clEnumValN(InputFileType::Names, "names-stream",
+                          "Treat input as raw contents of /names named stream"),
+               clEnumValN(InputFileType::ModuleStream, "mod-stream",
+                          "Treat input as raw contents of a module stream")));
 } // namespace explain
+
+namespace exportstream {
+cl::list<std::string> InputFilename(cl::Positional,
+                                    cl::desc("<input PDB file>"), cl::Required,
+                                    cl::sub(ExportSubcommand));
+cl::opt<std::string> OutputFile("out",
+                                cl::desc("The file to write the stream to"),
+                                cl::Required, cl::sub(ExportSubcommand));
+cl::opt<std::string>
+    Stream("stream", cl::Required,
+           cl::desc("The index or name of the stream whose contents to export"),
+           cl::sub(ExportSubcommand));
+cl::opt<bool> ForceName("name",
+                        cl::desc("Force the interpretation of -stream as a "
+                                 "string, even if it is a valid integer"),
+                        cl::sub(ExportSubcommand), cl::Optional,
+                        cl::init(false));
+} // namespace exportstream
 }
 
 static ExitOnError ExitOnErr;
@@ -750,7 +802,6 @@ static void pdb2Yaml(StringRef Path) {
 }
 
 static void dumpRaw(StringRef Path) {
-
   InputFile IF = ExitOnErr(InputFile::open(Path));
 
   auto O = llvm::make_unique<DumpOutputStyle>(IF);
@@ -924,6 +975,82 @@ static void dumpPretty(StringRef Path) {
     outs() << "HasPrivateSymbols ";
   Printer.Unindent();
 
+  if (!opts::pretty::WithName.empty()) {
+    Printer.NewLine();
+    WithColor(Printer, PDB_ColorItem::SectionHeader).get()
+        << "---SYMBOLS & TYPES BY NAME---";
+
+    for (StringRef Name : opts::pretty::WithName) {
+      auto Symbols = GlobalScope->findChildren(
+          PDB_SymType::None, Name, PDB_NameSearchFlags::NS_CaseSensitive);
+      if (!Symbols || Symbols->getChildCount() == 0) {
+        Printer.formatLine("[not found] - {0}", Name);
+        continue;
+      }
+      Printer.formatLine("[{0} occurrences] - {1}", Symbols->getChildCount(),
+                         Name);
+
+      AutoIndent Indent(Printer);
+      Printer.NewLine();
+
+      while (auto Symbol = Symbols->getNext()) {
+        switch (Symbol->getSymTag()) {
+        case PDB_SymType::Typedef: {
+          TypedefDumper TD(Printer);
+          std::unique_ptr<PDBSymbolTypeTypedef> T =
+              llvm::unique_dyn_cast<PDBSymbolTypeTypedef>(std::move(Symbol));
+          TD.start(*T);
+          break;
+        }
+        case PDB_SymType::Enum: {
+          EnumDumper ED(Printer);
+          std::unique_ptr<PDBSymbolTypeEnum> E =
+              llvm::unique_dyn_cast<PDBSymbolTypeEnum>(std::move(Symbol));
+          ED.start(*E);
+          break;
+        }
+        case PDB_SymType::UDT: {
+          ClassDefinitionDumper CD(Printer);
+          std::unique_ptr<PDBSymbolTypeUDT> C =
+              llvm::unique_dyn_cast<PDBSymbolTypeUDT>(std::move(Symbol));
+          CD.start(*C);
+          break;
+        }
+        case PDB_SymType::BaseClass:
+        case PDB_SymType::Friend: {
+          TypeDumper TD(Printer);
+          Symbol->dump(TD);
+          break;
+        }
+        case PDB_SymType::Function: {
+          FunctionDumper FD(Printer);
+          std::unique_ptr<PDBSymbolFunc> F =
+              llvm::unique_dyn_cast<PDBSymbolFunc>(std::move(Symbol));
+          FD.start(*F, FunctionDumper::PointerType::None);
+          break;
+        }
+        case PDB_SymType::Data: {
+          VariableDumper VD(Printer);
+          std::unique_ptr<PDBSymbolData> D =
+              llvm::unique_dyn_cast<PDBSymbolData>(std::move(Symbol));
+          VD.start(*D);
+          break;
+        }
+        case PDB_SymType::PublicSymbol: {
+          ExternalSymbolDumper ED(Printer);
+          std::unique_ptr<PDBSymbolPublicSymbol> PS =
+              llvm::unique_dyn_cast<PDBSymbolPublicSymbol>(std::move(Symbol));
+          ED.dump(*PS);
+          break;
+        }
+        default:
+          llvm_unreachable("Unexpected symbol tag!");
+        }
+      }
+    }
+    llvm::outs().flush();
+  }
+
   if (opts::pretty::Compilands) {
     Printer.NewLine();
     WithColor(Printer, PDB_ColorItem::SectionHeader).get()
@@ -977,8 +1104,8 @@ static void dumpPretty(StringRef Path) {
           std::vector<std::unique_ptr<PDBSymbolFunc>> Funcs;
           while (auto Func = Functions->getNext())
             Funcs.push_back(std::move(Func));
-          std::sort(Funcs.begin(), Funcs.end(),
-                    opts::pretty::compareFunctionSymbols);
+          llvm::sort(Funcs.begin(), Funcs.end(),
+                     opts::pretty::compareFunctionSymbols);
           for (const auto &Func : Funcs) {
             Printer.NewLine();
             Dumper.start(*Func, FunctionDumper::PointerType::None);
@@ -996,8 +1123,8 @@ static void dumpPretty(StringRef Path) {
           std::vector<std::unique_ptr<PDBSymbolData>> Datas;
           while (auto Var = Vars->getNext())
             Datas.push_back(std::move(Var));
-          std::sort(Datas.begin(), Datas.end(),
-                    opts::pretty::compareDataSymbols);
+          llvm::sort(Datas.begin(), Datas.end(),
+                     opts::pretty::compareDataSymbols);
           for (const auto &Var : Datas)
             Dumper.start(*Var);
         }
@@ -1089,13 +1216,54 @@ static void mergePdbs() {
 
 static void explain() {
   std::unique_ptr<IPDBSession> Session;
-  PDBFile &File = loadPDB(opts::explain::InputFilename.front(), Session);
+  InputFile IF =
+      ExitOnErr(InputFile::open(opts::explain::InputFilename.front(), true));
 
   for (uint64_t Off : opts::explain::Offsets) {
-    auto O = llvm::make_unique<ExplainOutputStyle>(File, Off);
+    auto O = llvm::make_unique<ExplainOutputStyle>(IF, Off);
 
     ExitOnErr(O->dump());
   }
+}
+
+static void exportStream() {
+  std::unique_ptr<IPDBSession> Session;
+  PDBFile &File = loadPDB(opts::exportstream::InputFilename.front(), Session);
+
+  std::unique_ptr<MappedBlockStream> SourceStream;
+  uint32_t Index = 0;
+  bool Success = false;
+  std::string OutFileName = opts::exportstream::OutputFile;
+
+  if (!opts::exportstream::ForceName) {
+    // First try to parse it as an integer, if it fails fall back to treating it
+    // as a named stream.
+    if (to_integer(opts::exportstream::Stream, Index)) {
+      if (Index >= File.getNumStreams()) {
+        errs() << "Error: " << Index << " is not a valid stream index.\n";
+        exit(1);
+      }
+      Success = true;
+      outs() << "Dumping contents of stream index " << Index << " to file "
+             << OutFileName << ".\n";
+    }
+  }
+
+  if (!Success) {
+    InfoStream &IS = cantFail(File.getPDBInfoStream());
+    Index = ExitOnErr(IS.getNamedStreamIndex(opts::exportstream::Stream));
+    outs() << "Dumping contents of stream '" << opts::exportstream::Stream
+           << "' (index " << Index << ") to file " << OutFileName << ".\n";
+  }
+
+  SourceStream = MappedBlockStream::createIndexedStream(
+      File.getMsfLayout(), File.getMsfBuffer(), Index, File.getAllocator());
+  auto OutFile = ExitOnErr(
+      FileOutputBuffer::create(OutFileName, SourceStream->getLength()));
+  FileBufferByteStream DestStream(std::move(OutFile), llvm::support::little);
+  BinaryStreamWriter Writer(DestStream);
+  ExitOnErr(Writer.writeStreamRef(*SourceStream));
+  ExitOnErr(DestStream.commit());
 }
 
 static bool parseRange(StringRef Str,
@@ -1129,21 +1297,11 @@ static void simplifyChunkList(llvm::cl::list<opts::ModuleSubsection> &Chunks) {
   Chunks.push_back(opts::ModuleSubsection::All);
 }
 
-int main(int argc_, const char *argv_[]) {
-  // Print a stack trace if we signal out.
-  sys::PrintStackTraceOnErrorSignal(argv_[0]);
-  PrettyStackTraceProgram X(argc_, argv_);
-
+int main(int Argc, const char **Argv) {
+  InitLLVM X(Argc, Argv);
   ExitOnErr.setBanner("llvm-pdbutil: ");
 
-  SmallVector<const char *, 256> argv;
-  SpecificBumpPtrAllocator<char> ArgAllocator;
-  ExitOnErr(errorCodeToError(sys::Process::GetArgumentVector(
-      argv, makeArrayRef(argv_, argc_), ArgAllocator)));
-
-  llvm_shutdown_obj Y; // Call llvm_shutdown() on exit.
-
-  cl::ParseCommandLineOptions(argv.size(), argv.data(), "LLVM PDB Dumper\n");
+  cl::ParseCommandLineOptions(Argc, Argv, "LLVM PDB Dumper\n");
 
   if (opts::BytesSubcommand) {
     if (!parseRange(opts::bytes::DumpBlockRangeOpt,
@@ -1274,6 +1432,8 @@ int main(int argc_, const char *argv_[]) {
     mergePdbs();
   } else if (opts::ExplainSubcommand) {
     explain();
+  } else if (opts::ExportSubcommand) {
+    exportStream();
   }
 
   outs().flush();

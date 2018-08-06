@@ -47,8 +47,8 @@ static RTLIB::Libcall GetFPLibCall(EVT VT,
 //===----------------------------------------------------------------------===//
 
 bool DAGTypeLegalizer::SoftenFloatResult(SDNode *N, unsigned ResNo) {
-  DEBUG(dbgs() << "Soften float result " << ResNo << ": "; N->dump(&DAG);
-        dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "Soften float result " << ResNo << ": "; N->dump(&DAG);
+             dbgs() << "\n");
   SDValue R = SDValue();
 
   switch (N->getOpcode()) {
@@ -153,7 +153,7 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_ConstantFP(SDNode *N, unsigned ResNo) {
   // of Endianness. LLVM's APFloat representation is not Endian sensitive,
   // and so always converts into a 128-bit APInt in a non-Endian-sensitive
   // way. However, APInt's are serialized in an Endian-sensitive fashion,
-  // so on big-Endian targets, the two doubles are output in the wrong 
+  // so on big-Endian targets, the two doubles are output in the wrong
   // order. Fix this by manually flipping the order of the high 64 bits
   // and the low 64 bits here.
   if (DAG.getDataLayout().isBigEndian() &&
@@ -738,8 +738,8 @@ SDValue DAGTypeLegalizer::SoftenFloatRes_XINT_TO_FP(SDNode *N) {
 //===----------------------------------------------------------------------===//
 
 bool DAGTypeLegalizer::SoftenFloatOperand(SDNode *N, unsigned OpNo) {
-  DEBUG(dbgs() << "Soften float operand " << OpNo << ": "; N->dump(&DAG);
-        dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "Soften float operand " << OpNo << ": "; N->dump(&DAG);
+             dbgs() << "\n");
   SDValue Res = SDValue();
 
   switch (N->getOpcode()) {
@@ -815,7 +815,7 @@ bool DAGTypeLegalizer::CanSkipSoftenFloatOperand(SDNode *N, unsigned OpNo) {
 
   switch (N->getOpcode()) {
     case ISD::ConstantFP:  // Leaf node.
-    case ISD::CopyFromReg: // Operand is a register that we know to be left 
+    case ISD::CopyFromReg: // Operand is a register that we know to be left
                            // unchanged by SoftenFloatResult().
     case ISD::Register:    // Leaf node.
       return true;
@@ -838,7 +838,7 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_COPY_TO_REG(SDNode *N) {
   if (N->getNumOperands() == 3)
     return SDValue(DAG.UpdateNodeOperands(N, N->getOperand(0), Op1, Op2), 0);
 
-  return SDValue(DAG.UpdateNodeOperands(N, N->getOperand(0), Op1, Op2, 
+  return SDValue(DAG.UpdateNodeOperands(N, N->getOperand(0), Op1, Op2,
                                         N->getOperand(3)),
                  0);
 }
@@ -1039,7 +1039,7 @@ SDValue DAGTypeLegalizer::SoftenFloatOp_STORE(SDNode *N, unsigned OpNo) {
 /// have invalid operands or may have other results that need promotion, we just
 /// know that (at least) one result needs expansion.
 void DAGTypeLegalizer::ExpandFloatResult(SDNode *N, unsigned ResNo) {
-  DEBUG(dbgs() << "Expand float result: "; N->dump(&DAG); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "Expand float result: "; N->dump(&DAG); dbgs() << "\n");
   SDValue Lo, Hi;
   Lo = Hi = SDValue();
 
@@ -1538,7 +1538,7 @@ void DAGTypeLegalizer::ExpandFloatRes_XINT_TO_FP(SDNode *N, SDValue &Lo,
 /// types of the node are known to be legal, but other operands of the node may
 /// need promotion or expansion as well as the specified one.
 bool DAGTypeLegalizer::ExpandFloatOperand(SDNode *N, unsigned OpNo) {
-  DEBUG(dbgs() << "Expand float operand: "; N->dump(&DAG); dbgs() << "\n");
+  LLVM_DEBUG(dbgs() << "Expand float operand: "; N->dump(&DAG); dbgs() << "\n");
   SDValue Res = SDValue();
 
   // See if the target wants to custom expand this node.
@@ -1898,7 +1898,8 @@ void DAGTypeLegalizer::PromoteFloatResult(SDNode *N, unsigned ResNo) {
     case ISD::FROUND:
     case ISD::FSIN:
     case ISD::FSQRT:
-    case ISD::FTRUNC:     R = PromoteFloatRes_UnaryOp(N); break;
+    case ISD::FTRUNC:
+    case ISD::FCANONICALIZE: R = PromoteFloatRes_UnaryOp(N); break;
 
     // Binary FP Operations
     case ISD::FADD:
@@ -2102,13 +2103,12 @@ SDValue DAGTypeLegalizer::PromoteFloatRes_LOAD(SDNode *N) {
 
   // Load the value as an integer value with the same number of bits.
   EVT IVT = EVT::getIntegerVT(*DAG.getContext(), VT.getSizeInBits());
-  auto MMOFlags =
-      L->getMemOperand()->getFlags() &
-      ~(MachineMemOperand::MOInvariant | MachineMemOperand::MODereferenceable);
   SDValue newL = DAG.getLoad(L->getAddressingMode(), L->getExtensionType(), IVT,
                              SDLoc(N), L->getChain(), L->getBasePtr(),
                              L->getOffset(), L->getPointerInfo(), IVT,
-                             L->getAlignment(), MMOFlags, L->getAAInfo());
+                             L->getAlignment(),
+                             L->getMemOperand()->getFlags(),
+                             L->getAAInfo());
   // Legalize the chain result by replacing uses of the old value chain with the
   // new one
   ReplaceValueWith(SDValue(N, 1), newL.getValue(1));

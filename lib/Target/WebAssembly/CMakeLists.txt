@@ -1,21 +1,26 @@
 set(LLVM_TARGET_DEFINITIONS WebAssembly.td)
 
+tablegen(LLVM WebAssemblyGenAsmMatcher.inc -gen-asm-matcher)
 tablegen(LLVM WebAssemblyGenAsmWriter.inc -gen-asm-writer)
 tablegen(LLVM WebAssemblyGenDAGISel.inc -gen-dag-isel)
+tablegen(LLVM WebAssemblyGenDisassemblerTables.inc -gen-disassembler)
 tablegen(LLVM WebAssemblyGenFastISel.inc -gen-fast-isel)
 tablegen(LLVM WebAssemblyGenInstrInfo.inc -gen-instr-info)
 tablegen(LLVM WebAssemblyGenMCCodeEmitter.inc -gen-emitter)
 tablegen(LLVM WebAssemblyGenRegisterInfo.inc -gen-register-info)
 tablegen(LLVM WebAssemblyGenSubtargetInfo.inc -gen-subtarget)
-tablegen(LLVM WebAssemblyGenAsmMatcher.inc -gen-asm-matcher)
+
 add_public_tablegen_target(WebAssemblyCommonTableGen)
 
 add_llvm_target(WebAssemblyCodeGen
+  WebAssemblyAddMissingPrototypes.cpp
   WebAssemblyArgumentMove.cpp
   WebAssemblyAsmPrinter.cpp
   WebAssemblyCallIndirectFixup.cpp
   WebAssemblyCFGStackify.cpp
   WebAssemblyCFGSort.cpp
+  WebAssemblyLateEHPrepare.cpp
+  WebAssemblyExceptionInfo.cpp
   WebAssemblyExplicitLocals.cpp
   WebAssemblyFastISel.cpp
   WebAssemblyFixIrreducibleControlFlow.cpp
