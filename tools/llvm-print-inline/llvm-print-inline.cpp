@@ -13,6 +13,7 @@
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include <iostream>
 #include <iterator>
+#include <set>
 using namespace llvm;
 using namespace std;
 
@@ -20,7 +21,126 @@ using DWARFLineTable = DWARFDebugLine::LineTable;
 using FileLineInfoKind = DILineInfoSpecifier::FileLineInfoKind;
 using FunctionNameKind = DILineInfoSpecifier::FunctionNameKind;
 
+
+
 cl::opt<std::string> Binary("binary", llvm::cl::desc( "Binary file name"),llvm::cl::Required);
+cl::list<std::string> FunctionNames(llvm::cl::desc( "functions to print"), cl::Positional,cl::ZeroOrMore);
+cl::opt<bool> PrintAll("all",llvm::cl::desc("print all functions"), cl::Optional);
+
+
+
+/*
+ * Represent an inline tree
+ *
+ * */
+
+static  const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKind::LinkageName};
+
+class InlineTree {
+public :
+
+    const DWARFDie  FunctionDIE ;
+    std::vector<InlineTree> children;
+    unsigned int depth;
+
+    InlineTree(const DWARFDie & rootDie) : FunctionDIE(rootDie), depth(0){
+        for (auto const & child : FunctionDIE.children()){
+            if (!child.isSubroutineDIE() or  (child.getSubroutineName(DINameKind::LinkageName) == nullptr))
+                continue ;
+            children.push_back({child});
+        }
+        if (!children.empty())
+            depth = std::max_element(children.begin(),children.end(),
+                    [](const InlineTree & a,
+                            const InlineTree & b){return a.depth < b.depth;})->depth + 1;
+    };
+
+
+static void printInlineTree(const InlineTree & tree,
+                            const DWARFLineTable & LineTable,
+                            std::ostream & out = std::cout,
+                            const std::string & ident_char = "\t") {
+
+        // Tree and level for printing
+        // a std::stack would have been sufficient here, but since we also sort the element inplace
+        // we need a container with random access.
+        std::vector<std::pair<std::reference_wrapper<const InlineTree>, int> > trees ;
+        std::ostream & ss  = std::cout;
+
+        trees.push_back({std::cref(tree),0});
+
+        std::map<int, std::string> ident_map;
+
+        //ident_Char should be capture as const ref, but can't really before c++17
+        auto get_indent_string = [&ident_map,ident_char](int level) -> std::string {
+                auto insert_it = ident_map.find(level);
+                if (insert_it == ident_map.end()) {
+                    std::string & ident_string = ident_map[level];
+                    for (int i =0; i < level;i++)
+                        ident_string+=ident_char;
+                }
+                return ident_map[level] ;
+
+        };
+
+        // We sort the inlined subroutine by code location
+        auto die_compare  = [](const  DWARFDie & a, const  DWARFDie & b) {
+           assert(a.isSubroutineDIE());
+            assert(b.isSubroutineDIE());
+        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB;
+        uint32_t unused;
+        a.getCallerFrame(unused,callLineA,unused,discriminatorA);
+        b.getCallerFrame(unused,callLineB,unused,discriminatorB);
+        return std::tie(callLineA,discriminatorA) < std::tie(callLineB,discriminatorB);
+        };
+
+        //Iterative depth traversal
+
+        while (!trees.empty()) {
+            auto  level = trees.back().second;
+            auto  tree  = trees.back().first;
+            out << get_indent_string(level);
+            printSubroutineDie(tree.get().FunctionDIE,LineTable,out);
+            out << "\n";
+            trees.pop_back();
+
+            auto child_it = trees.size();
+            for (const auto &  subtree : tree.get().children) {
+                //TODO investigate subroutine with missing linkageNames
+                if (subtree.FunctionDIE.getSubroutineName(DINameKind::LinkageName) == nullptr) continue ;
+                assert(subtree.FunctionDIE.isValid());
+                trees.push_back({std::cref(subtree),level+1});
+            }
+
+            //Sort the newly inserted nodes, this makes the output more stable and easier to compare
+            //accros different binaries
+            std::sort(trees.begin() + child_it,trees.begin() + trees.size(),[&die_compare]
+                    (std::pair<std::reference_wrapper<const InlineTree>, int> & a,
+                     std::pair<std::reference_wrapper<const InlineTree>, int> & b) {
+                assert(a.first.get().FunctionDIE.getSubroutineName(DINameKind::LinkageName) != nullptr);
+                assert(b.first.get().FunctionDIE.getSubroutineName(DINameKind::LinkageName) != nullptr);
+                return die_compare(a.first.get().FunctionDIE,b.first.get().FunctionDIE) ; });
+
+        }
+    }
+    static void printSubroutineDie(const DWARFDie & FunctionDIE, const DWARFLineTable & LineTable, std::ostream &out) {
+        assert(FunctionDIE.isSubroutineDIE());
+        std::string name = FunctionDIE.getSubroutineName(infoSpec.FNKind);
+
+        if (FunctionDIE.isSubprogramDIE()) {
+            std::string fileName;
+            LineTable.getFileNameByIndex(FunctionDIE.getDeclFile(),nullptr,infoSpec.FLIKind,fileName);
+            out  <<  name << " : " << fileName << " : " << FunctionDIE.getDeclLine() ;
+        } else {
+            //this is an inlined subroutine
+            uint32_t CallFile, CallLine, CallColumn, CallDiscriminator;
+            FunctionDIE.getCallerFrame(CallFile,CallLine,CallColumn,CallDiscriminator);
+            out <<  name  << " : " <<  CallLine << " : " << CallDiscriminator;
+        }
+    }
+};
+
+
 
 
 //get the corresponding debug context or fails terminally
@@ -45,26 +165,10 @@ static std::pair<std::unique_ptr<DWARFContext>,object::OwningBinary<object::Bina
 }
 
 
-const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKind::LinkageName};
+
 
 static DILineInfo getLineInfo(const DWARFDie & die, const DWARFLineTable & LineTable) {
 
-}
-
-static void printSubroutineDie(const DWARFDie & FunctionDIE , const DWARFLineTable & LineTable, std::ostream &out) {
-    assert(FunctionDIE.isSubroutineDIE());
-    std::string name = FunctionDIE.getSubroutineName(infoSpec.FNKind);
-
-    if (FunctionDIE.isSubprogramDIE()) {
-        std::string fileName;
-        LineTable.getFileNameByIndex(FunctionDIE.getDeclFile(),nullptr,infoSpec.FLIKind,fileName);
-        out  <<  name << " : " << fileName << " : " << FunctionDIE.getDeclLine() ;
-    } else {
-        //this is an inlined subroutine
-        uint32_t CallFile, CallLine, CallColumn, CallDiscriminator;
-        FunctionDIE.getCallerFrame(CallFile,CallLine,CallColumn,CallDiscriminator);
-        out <<  name  << " : " <<  CallLine << " : " << CallDiscriminator;
-    }
 }
 
 int main(int argc, char **argv)  {
@@ -75,76 +179,39 @@ int main(int argc, char **argv)  {
     auto context_  = getDebugContext(Binary);
     auto debugContext = std::move(context_.first) ;
 
-    // Die and depth level for printing
-    // a std::stack would have been sufficient here, but since we also sort the element inplace
-    // we need a container with random access.
-    std::vector<std::pair<DWARFDie, int>> dies ;
     std::ostream & ss  = std::cout;
 
-    //TODO:  this doesnt work for top level subprograms
-    auto die_compare  = [](const  DWARFDie & a, const  DWARFDie & b) {
-        assert(a.isSubroutineDIE());
-        assert(b.isSubroutineDIE());
-        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB;
-        uint32_t unused;
-        a.getCallerFrame(unused,callLineA,unused,discriminatorA);
-        b.getCallerFrame(unused,callLineB,unused,discriminatorB);
-        return std::tie(callLineA,discriminatorA) < std::tie(callLineB,discriminatorB);
-    };
+    std::set<std::string> functions(FunctionNames.begin(),FunctionNames.end());
+    std::set<std::string> printed_functions;
 
     for (const auto & compilationUnit : debugContext->compile_units()) {
         const DWARFLineTable & LineTable = *debugContext->getLineTableForUnit(compilationUnit.get());
 
         //scan for all top level subroutine entries in the given compilation unit
-        dies.clear();
         for (auto const & die : compilationUnit->getUnitDIE(false).children()){
             if(!die.isSubprogramDIE() or !die.hasChildren() or (die.getSubroutineName(DINameKind::LinkageName) == nullptr)) continue ;
-            assert(die.isValid());
+
+            /*
+             * Don't print if the functions has already been printed (happens when the functions is in multiple CUs,
+             * or if the function hasn't been requested
+             * */
+            if( not (PrintAll) and
+                ( (functions.count(die.getSubroutineName(DINameKind::LinkageName)) == 0) or
+                 printed_functions.count(die.getSubroutineName(DINameKind::LinkageName)) != 0 )) continue ;
+
             //we should fail on non contiguous functions
-            assert(die.getAddressRanges().size() < 2);
-            dies.push_back(std::make_pair(die,0));
+            if (auto err = die.getAddressRanges())
+                assert(err.get().size() < 2);
+
+            InlineTree tree(die);
+            //Avoid noisy output
+            if (tree.depth == 0) continue;
+            ss << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName) <<std::endl;
+            printed_functions.insert(die.getSubroutineName(DINameKind::LinkageName));
+            InlineTree::printInlineTree(die,LineTable);
         };
 
-        ss << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName)
-                  << " "<< dies.size() << " function(s)" <<std::endl;
 
-        std::sort(dies.begin(),dies.end(),[&die_compare]
-                (const std::pair<DWARFDie, int> & a, const std::pair<DWARFDie, int> & b) {
-                  assert(a.first.getSubroutineName(DINameKind::LinkageName) != nullptr);
-                  assert(b.first.getSubroutineName(DINameKind::LinkageName) != nullptr);
-                  return std::string(a.first.getSubroutineName(DINameKind::LinkageName)) <
-                         std::string(b.first.getSubroutineName(DINameKind::LinkageName));});
-
-        while (!dies.empty()){
-            const auto die =  dies.back().first;
-            int depth = dies.back().second;
-            dies.pop_back();
-
-            size_t current_size = dies.size() ;
-
-            for (auto const & child : die.children()){
-                if (!child.isSubroutineDIE() or  (child.getSubroutineName(DINameKind::LinkageName) == nullptr))
-                    continue ;
-                    dies.push_back(std::make_pair(child,depth +1));
-            }
-
-            //We dont print top level functions with no inline call site
-            if ( (depth !=0) or (dies.size() >  current_size)) {
-                for (int i = 0; i < depth; ++i)
-                    ss << ' ';
-                printSubroutineDie(die, LineTable, ss);
-                ss << std::endl;
-
-                //sort the new added children die
-                std::sort(dies.begin() + current_size, dies.end(), [&die_compare]
-                        (const std::pair<DWARFDie, int> &a, const std::pair<DWARFDie, int> &b) {
-                    return die_compare(b.first, a.first);
-                });
-
-
-            }
-            }
     }
 
-    //std::cout << ss.rdbuf() << std::endl;
 }
