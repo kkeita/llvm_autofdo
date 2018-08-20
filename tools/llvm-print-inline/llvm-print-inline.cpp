@@ -14,6 +14,7 @@
 #include <iostream>
 #include <iterator>
 #include <set>
+#include <map>
 using namespace llvm;
 using namespace std;
 
@@ -36,9 +37,11 @@ cl::opt<bool> PrintAll("all",llvm::cl::desc("print all functions"), cl::Optional
 
 static  const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKind::LinkageName};
 
+
 class InlineTree {
 public :
-
+    enum class DiffState { SAME,ADDED,REMOVED};
+    DiffState diff;
     const DWARFDie  FunctionDIE ;
     std::vector<InlineTree> children;
     unsigned int depth;
@@ -56,6 +59,51 @@ public :
     };
 
 
+    /*
+     * Return true if the head of both trees is the same;
+     * We essentially compare the DWARFDie to make sure they represent the same inlined
+     *  instance ie same function inlined at the same target location
+     *
+     * */
+    //TODO: unify this with die_compare;
+    static bool compare_head(const DWARFDie  &left,const DWARFDie & right) {
+
+        assert(left.isSubroutineDIE());
+        assert(right.isSubroutineDIE());
+        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB;
+        uint32_t unused;
+        left.getCallerFrame(unused,callLineA,unused,discriminatorA);
+        right.getCallerFrame(unused,callLineB,unused,discriminatorB);
+
+        return (left.getSubroutineName(DINameKind::LinkageName)
+                  == right.getSubroutineName(DINameKind::LinkageName))
+                  and std::tie(callLineA,discriminatorA) == std::tie(callLineB,discriminatorB);
+    }
+
+    static InlineTree TreeDifference(InlineTree & left, InlineTree & right) {
+            assert(compare_head(left.FunctionDIE,right.FunctionDIE));
+
+            // matching child nodes;
+            auto compare_die = [](const DWARFDie  &left,const DWARFDie & right) { return compare_head(left,right) ;}
+            std::set<DWARFDie,decltype(compare_die)> right_nodes ;
+            std::map<DWARFDie,decltype(compare_die)> left_nodes ;
+            for (auto & child : left.children){
+                assert(left_nodes.count(child.FunctionDIE) == 0); //
+                left_nodes.insert(child.FunctionDIE);
+            }
+
+            for (auto & child : right.children){
+                assert(right_nodes.count(child.FunctionDIE) == 0); //
+                right_nodes.insert(child.FunctionDIE);
+            }
+
+            auto common_nodes = std::set_interse
+
+    }
+
+    void get_code_location(uint32_t ) {
+
+    }
 static void printInlineTree(const InlineTree & tree,
                             const DWARFLineTable & LineTable,
                             std::ostream & out = std::cout,
