@@ -92,8 +92,8 @@ public :
 
             // matching child nodes;
             auto compare_die = [](const InlineTree  * left,const InlineTree * right) { return compare_head(left->FunctionDIE,right->FunctionDIE) ;};
-            std::set<InlineTree *,decltype(compare_die)> right_nodes ;
-            std::set<InlineTree *,decltype(compare_die)> left_nodes ;
+            std::set<InlineTree *, decltype(compare_die)> right_nodes(compare_die) ;
+            std::set<InlineTree *, decltype(compare_die)> left_nodes(compare_die) ;
 
 
             std::vector<InlineTree> diff_childs ;
@@ -123,7 +123,7 @@ public :
                 removedNode.diff = DiffState::REMOVED;
                 diff_childs.push_back(std::move(removedNode));
             }
-
+            root.children = std::move(diff_childs);
             return root;
     }
 
