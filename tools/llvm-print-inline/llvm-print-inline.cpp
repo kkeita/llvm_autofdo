@@ -40,12 +40,14 @@ static  const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKi
 
 class InlineTree {
 public :
-    enum class DiffState { SAME,ADDED,REMOVED};
+    enum class DiffState { UNKNOWN,
+                           EXISTING,NEW,REMOVED };
     DiffState diff;
-    const DWARFDie  FunctionDIE ;
+    DWARFDie  FunctionDIE ;
     std::vector<InlineTree> children;
     unsigned int depth;
 
+    InlineTree() {};
     InlineTree(const DWARFDie & rootDie) : FunctionDIE(rootDie), depth(0){
         for (auto const & child : FunctionDIE.children()){
             if (!child.isSubroutineDIE() or  (child.getSubroutineName(DINameKind::LinkageName) == nullptr))
@@ -83,27 +85,48 @@ public :
     static InlineTree TreeDifference(InlineTree & left, InlineTree & right) {
             assert(compare_head(left.FunctionDIE,right.FunctionDIE));
 
+            InlineTree root;
+            root.FunctionDIE = left.FunctionDIE;
+            root.diff = DiffState::EXISTING;
+
+
             // matching child nodes;
-            auto compare_die = [](const DWARFDie  &left,const DWARFDie & right) { return compare_head(left,right) ;}
-            std::set<DWARFDie,decltype(compare_die)> right_nodes ;
-            std::map<DWARFDie,decltype(compare_die)> left_nodes ;
+            auto compare_die = [](const InlineTree  * left,const InlineTree * right) { return compare_head(left->FunctionDIE,right->FunctionDIE) ;};
+            std::set<InlineTree *,decltype(compare_die)> right_nodes ;
+            std::set<InlineTree *,decltype(compare_die)> left_nodes ;
+
+
+            std::vector<InlineTree> diff_childs ;
+
             for (auto & child : left.children){
-                assert(left_nodes.count(child.FunctionDIE) == 0); //
-                left_nodes.insert(child.FunctionDIE);
+                assert(left_nodes.count(&child) == 0); //
+                left_nodes.insert(&child);
             }
 
             for (auto & child : right.children){
-                assert(right_nodes.count(child.FunctionDIE) == 0); //
-                right_nodes.insert(child.FunctionDIE);
+                if (left_nodes.count(&child)) {
+                    //exiting node in both tree
+                    auto exist_nodes = TreeDifference(**left_nodes.find(&child), child);
+                    diff_childs.push_back(std::move(exist_nodes));
+                    left_nodes.erase(&child);
+                } else {
+                    // node not in the right but not in the left tree
+                    InlineTree newNode = child;
+                    newNode.diff = DiffState::NEW;
+                    diff_childs.push_back(std::move(newNode));
+                }
+
             }
 
-            auto common_nodes = std::set_interse
+            for (auto & child : left_nodes){
+                InlineTree removedNode = *child;
+                removedNode.diff = DiffState::REMOVED;
+                diff_childs.push_back(std::move(removedNode));
+            }
 
+            return root;
     }
 
-    void get_code_location(uint32_t ) {
-
-    }
 static void printInlineTree(const InlineTree & tree,
                             const DWARFLineTable & LineTable,
                             std::ostream & out = std::cout,
@@ -142,12 +165,18 @@ static void printInlineTree(const InlineTree & tree,
         return std::tie(callLineA,discriminatorA) < std::tie(callLineB,discriminatorB);
         };
 
+        std::map<DiffState , std::string> diffmap = {{DiffState::NEW, "+"},
+                                                   {DiffState::EXISTING, " "},
+                                                   {DiffState::REMOVED, "-"},
+                                                   {DiffState::UNKNOWN," U "}};
+
         //Iterative depth traversal
 
         while (!trees.empty()) {
             auto  level = trees.back().second;
             auto  tree  = trees.back().first;
             out << get_indent_string(level);
+            out << diffmap[tree.get().diff];
             printSubroutineDie(tree.get().FunctionDIE,LineTable,out);
             out << "\n";
             trees.pop_back();
