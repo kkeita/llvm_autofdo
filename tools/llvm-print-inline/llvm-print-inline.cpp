@@ -46,12 +46,16 @@ static  const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKi
 
 class InlineTree {
 public :
+
+    //When diffing two trees, we track here whether or not this node is present in both,
+    //or only one tree
     enum class DiffState { UNKNOWN, EXISTING,NEW,REMOVED };
     DiffState diff = DiffState::UNKNOWN;
-    DWARFDie  FunctionDIE ;
+
+    DWARFDie  FunctionDIE;
     std::vector<InlineTree> children;
     unsigned int depth;
-    unsigned int code_size;
+
     InlineTree() {};
     InlineTree(const DWARFDie & rootDie) : FunctionDIE(rootDie), depth(0){
         for (auto const & child : FunctionDIE.children()){
@@ -73,7 +77,7 @@ public :
      *
      * */
     //TODO: unify this with die_compare;
-    static bool compare_head(const DWARFDie  &left,const DWARFDie & right) {
+    static bool compare_die(const DWARFDie &left, const DWARFDie &right) {
 
         assert(left.isSubroutineDIE());
         assert(right.isSubroutineDIE());
@@ -86,54 +90,30 @@ public :
     }
 
     static InlineTree TreeDifference(InlineTree & left, InlineTree & right) {
-            //assert(compare_head(left.FunctionDIE,right.FunctionDIE));
-
             InlineTree root;
             root.FunctionDIE = left.FunctionDIE;
             root.diff = DiffState::EXISTING;
 
 
             // matching child nodes;
-            auto compare_die = [](const InlineTree  * left,const InlineTree * right) { return compare_head(left->FunctionDIE,right->FunctionDIE) ;};
+            auto compare = [](const InlineTree  * left,const InlineTree * right) { return compare_die(
+                    left->FunctionDIE, right->FunctionDIE) ;};
 
-            std::set<InlineTree *, decltype(compare_die)> right_nodes(compare_die) ;
-            std::set<InlineTree *, decltype(compare_die)> left_nodes(compare_die) ;
-
+            std::multiset<InlineTree *, decltype(compare)> right_nodes(compare) ;
+            std::multiset<InlineTree *, decltype(compare)> left_nodes(compare) ;
 
             std::vector<InlineTree> diff_childs ;
 
-            //to avoid comparison noise, we skip small functions without any inline subroutine
-            auto skip_node = [](const DWARFDie & die){
-                    return false ;
-                    assert (die.getAddressRanges().get().size() == 1);
-                    unsigned int code_size = die.getAddressRanges().get()[0].HighPC - die.getAddressRanges().get()[0].LowPC;
-                    return !(die.hasChildren());// and code_size < 12) ;
-            };
-
             for (auto & child : left.children){
-                if (skip_node(child.FunctionDIE))
-                    continue ;
-                /*
-                if (left_nodes.count(&child) != 0) { //
-                    uint32_t callLineA, callLineB, discriminatorA, discriminatorB;
-                    uint32_t unused;
-                    child.FunctionDIE.getCallerFrame(unused, callLineA, unused, discriminatorA);
-                    (*left_nodes.find(&child))->FunctionDIE.getCallerFrame(unused, callLineB, unused, discriminatorB);
-                    assert(false);
-
-                }*/
-
                 left_nodes.insert(&child);
             }
 
             for (auto & child : right.children){
-                if (skip_node(child.FunctionDIE))
-                    continue ;
-                if (left_nodes.count(&child)) {
+                if (left_nodes.count(&child) > 0) {
                     //exiting node in both tree
                     auto exist_nodes = TreeDifference(**left_nodes.find(&child), child);
                     diff_childs.push_back(std::move(exist_nodes));
-                    left_nodes.erase(&child);
+                    left_nodes.erase(left_nodes.find(&child));
                 } else {
                     // node not in the right but not in the left tree
                     InlineTree newNode = child;
@@ -179,16 +159,6 @@ static void printInlineTree(const InlineTree & tree,
 
         };
 
-        // We sort the inlined subroutine by code location
-        auto die_compare  = [](const  DWARFDie & a, const  DWARFDie & b) {
-           assert(a.isSubroutineDIE());
-            assert(b.isSubroutineDIE());
-        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB,CallColumnA,CallColumnB;
-        uint32_t unused;
-        a.getCallerFrame(unused,callLineA,CallColumnA,discriminatorA);
-        b.getCallerFrame(unused,callLineB,CallColumnB,discriminatorB);
-        return std::tie(callLineA,CallColumnA,discriminatorA) < std::tie(callLineB,CallColumnB,discriminatorB);
-        };
 
         std::map<DiffState , std::string> diffmap = {{DiffState::NEW, " + "},
                                                    {DiffState::EXISTING, " <> "},
@@ -216,12 +186,12 @@ static void printInlineTree(const InlineTree & tree,
 
             //Sort the newly inserted nodes, this makes the output more stable and easier to compare
             //accros different binaries
-            std::sort(trees.begin() + child_it,trees.begin() + trees.size(),[&die_compare]
+            std::sort(trees.begin() + child_it,trees.begin() + trees.size(),[]
                     (std::pair<std::reference_wrapper<const InlineTree>, int> & a,
                      std::pair<std::reference_wrapper<const InlineTree>, int> & b) {
                 assert(a.first.get().FunctionDIE.getSubroutineName(DINameKind::LinkageName) != nullptr);
                 assert(b.first.get().FunctionDIE.getSubroutineName(DINameKind::LinkageName) != nullptr);
-                return die_compare(a.first.get().FunctionDIE,b.first.get().FunctionDIE) ; });
+                return compare_die(a.first.get().FunctionDIE,b.first.get().FunctionDIE) ; });
 
         }
     }
@@ -349,15 +319,9 @@ void diff_main(){
 
     for (auto & p : trees1) {
         const DWARFLineTable & LineTable = *debugContext1->getLineTableForUnit(p.second.second);
-        //ss << p.second.first.FunctionDIE.getSubroutineName(DINameKind::LinkageName) << std::endl ;
-        //InlineTree::printSubroutineDie(p.second.first.FunctionDIE, LineTable,ss);
-        //InlineTree::printSubroutineDie(trees2[p.first].first.FunctionDIE, LineTable, ss);
-        //ss.flush();
         InlineTree tree = InlineTree::TreeDifference(p.second.first, trees2[p.first].first);
         InlineTree::printInlineTree(tree,LineTable);
     }
-
-
 
 }
 int main(int argc, char **argv)  {
