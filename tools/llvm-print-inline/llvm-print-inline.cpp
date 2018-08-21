@@ -46,13 +46,12 @@ static  const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKi
 
 class InlineTree {
 public :
-    enum class DiffState { UNKNOWN,
-                           EXISTING,NEW,REMOVED };
+    enum class DiffState { UNKNOWN, EXISTING,NEW,REMOVED };
     DiffState diff = DiffState::UNKNOWN;
     DWARFDie  FunctionDIE ;
     std::vector<InlineTree> children;
     unsigned int depth;
-
+    unsigned int code_size;
     InlineTree() {};
     InlineTree(const DWARFDie & rootDie) : FunctionDIE(rootDie), depth(0){
         for (auto const & child : FunctionDIE.children()){
@@ -96,13 +95,25 @@ public :
 
             // matching child nodes;
             auto compare_die = [](const InlineTree  * left,const InlineTree * right) { return compare_head(left->FunctionDIE,right->FunctionDIE) ;};
+
             std::set<InlineTree *, decltype(compare_die)> right_nodes(compare_die) ;
             std::set<InlineTree *, decltype(compare_die)> left_nodes(compare_die) ;
 
 
             std::vector<InlineTree> diff_childs ;
 
+            //to avoid comparison noise, we skip small functions without any inline subroutine
+            auto skip_node = [](const DWARFDie & die){
+                    return false ;
+                    assert (die.getAddressRanges().get().size() == 1);
+                    unsigned int code_size = die.getAddressRanges().get()[0].HighPC - die.getAddressRanges().get()[0].LowPC;
+                    return !(die.hasChildren());// and code_size < 12) ;
+            };
+
             for (auto & child : left.children){
+                if (skip_node(child.FunctionDIE))
+                    continue ;
+                /*
                 if (left_nodes.count(&child) != 0) { //
                     uint32_t callLineA, callLineB, discriminatorA, discriminatorB;
                     uint32_t unused;
@@ -110,11 +121,14 @@ public :
                     (*left_nodes.find(&child))->FunctionDIE.getCallerFrame(unused, callLineB, unused, discriminatorB);
                     assert(false);
 
-                }
+                }*/
+
                 left_nodes.insert(&child);
             }
 
             for (auto & child : right.children){
+                if (skip_node(child.FunctionDIE))
+                    continue ;
                 if (left_nodes.count(&child)) {
                     //exiting node in both tree
                     auto exist_nodes = TreeDifference(**left_nodes.find(&child), child);
@@ -176,9 +190,9 @@ static void printInlineTree(const InlineTree & tree,
         return std::tie(callLineA,CallColumnA,discriminatorA) < std::tie(callLineB,CallColumnB,discriminatorB);
         };
 
-        std::map<DiffState , std::string> diffmap = {{DiffState::NEW, "+"},
-                                                   {DiffState::EXISTING, " "},
-                                                   {DiffState::REMOVED, "-"},
+        std::map<DiffState , std::string> diffmap = {{DiffState::NEW, " + "},
+                                                   {DiffState::EXISTING, " <> "},
+                                                   {DiffState::REMOVED, " - "},
                                                    {DiffState::UNKNOWN," U "}};
 
         //Iterative depth traversal
@@ -335,10 +349,10 @@ void diff_main(){
 
     for (auto & p : trees1) {
         const DWARFLineTable & LineTable = *debugContext1->getLineTableForUnit(p.second.second);
-        ss << p.second.first.FunctionDIE.getSubroutineName(DINameKind::LinkageName) << std::endl ;
-        InlineTree::printSubroutineDie(p.second.first.FunctionDIE, LineTable,ss);
-        InlineTree::printSubroutineDie(trees2[p.first].first.FunctionDIE, LineTable, ss);
-        ss.flush();
+        //ss << p.second.first.FunctionDIE.getSubroutineName(DINameKind::LinkageName) << std::endl ;
+        //InlineTree::printSubroutineDie(p.second.first.FunctionDIE, LineTable,ss);
+        //InlineTree::printSubroutineDie(trees2[p.first].first.FunctionDIE, LineTable, ss);
+        //ss.flush();
         InlineTree tree = InlineTree::TreeDifference(p.second.first, trees2[p.first].first);
         InlineTree::printInlineTree(tree,LineTable);
     }
