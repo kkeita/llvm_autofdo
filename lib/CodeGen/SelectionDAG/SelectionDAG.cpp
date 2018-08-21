@@ -2374,7 +2374,7 @@ void SelectionDAG::computeKnownBits(SDValue Op, KnownBits &Known,
     if (SubIdx && SubIdx->getAPIntValue().ule(NumSrcElts - NumElts)) {
       // Offset the demanded elts by the subvector index.
       uint64_t Idx = SubIdx->getZExtValue();
-      APInt DemandedSrc = DemandedElts.zext(NumSrcElts).shl(Idx);
+      APInt DemandedSrc = DemandedElts.zextOrSelf(NumSrcElts).shl(Idx);
       computeKnownBits(Src, Known, DemandedSrc, Depth + 1);
     } else {
       computeKnownBits(Src, Known, Depth + 1);
@@ -3240,14 +3240,35 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
     if (VTBits == SrcBits)
       return ComputeNumSignBits(N0, DemandedElts, Depth + 1);
 
+    bool IsLE = getDataLayout().isLittleEndian();
+
     // Bitcast 'large element' scalar/vector to 'small element' vector.
-    // TODO: Handle cases other than 'sign splat' when we have a use case.
-    // Requires handling of DemandedElts and Endianness.
     if ((SrcBits % VTBits) == 0) {
-      assert(Op.getValueType().isVector() && "Expected bitcast to vector");
-      Tmp = ComputeNumSignBits(N0, Depth + 1);
+      assert(VT.isVector() && "Expected bitcast to vector");
+
+      unsigned Scale = SrcBits / VTBits;
+      APInt SrcDemandedElts(NumElts / Scale, 0);
+      for (unsigned i = 0; i != NumElts; ++i)
+        if (DemandedElts[i])
+          SrcDemandedElts.setBit(i / Scale);
+
+      // Fast case - sign splat can be simply split across the small elements.
+      Tmp = ComputeNumSignBits(N0, SrcDemandedElts, Depth + 1);
       if (Tmp == SrcBits)
         return VTBits;
+
+      // Slow case - determine how far the sign extends into each sub-element.
+      Tmp2 = VTBits;
+      for (unsigned i = 0; i != NumElts; ++i)
+        if (DemandedElts[i]) {
+          unsigned SubOffset = i % Scale;
+          SubOffset = (IsLE ? ((Scale - 1) - SubOffset) : SubOffset);
+          SubOffset = SubOffset * VTBits;
+          if (Tmp <= SubOffset)
+            return 1;
+          Tmp2 = std::min(Tmp2, Tmp - SubOffset);
+        }
+      return Tmp2;
     }
     break;
   }
@@ -3361,7 +3382,7 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
     // If setcc returns 0/-1, all bits are sign bits.
     // We know that we have an integer-based boolean since these operations
     // are only available for integer.
-    if (TLI->getBooleanContents(Op.getValueType().isVector(), false) ==
+    if (TLI->getBooleanContents(VT.isVector(), false) ==
         TargetLowering::ZeroOrNegativeOneBooleanContent)
       return VTBits;
     break;
@@ -3533,7 +3554,7 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, const APInt &DemandedElts,
     if (SubIdx && SubIdx->getAPIntValue().ule(NumSrcElts - NumElts)) {
       // Offset the demanded elts by the subvector index.
       uint64_t Idx = SubIdx->getZExtValue();
-      APInt DemandedSrc = DemandedElts.zext(NumSrcElts).shl(Idx);
+      APInt DemandedSrc = DemandedElts.zextOrSelf(NumSrcElts).shl(Idx);
       return ComputeNumSignBits(Src, DemandedSrc, Depth + 1);
     }
     return ComputeNumSignBits(Src, Depth + 1);
@@ -3641,11 +3662,15 @@ bool SelectionDAG::isKnownNeverNaN(SDValue Op, bool SNaN, unsigned Depth) const 
   switch (Opcode) {
   case ISD::FADD:
   case ISD::FSUB:
-  case ISD::FMUL: {
+  case ISD::FMUL:
+  case ISD::FDIV:
+  case ISD::FREM:
+  case ISD::FSIN:
+  case ISD::FCOS: {
     if (SNaN)
       return true;
-    return isKnownNeverNaN(Op.getOperand(0), SNaN, Depth + 1) &&
-           isKnownNeverNaN(Op.getOperand(1), SNaN, Depth + 1);
+    // TODO: Need isKnownNeverInfinity
+    return false;
   }
   case ISD::FCANONICALIZE:
   case ISD::FEXP:
@@ -3668,15 +3693,6 @@ bool SelectionDAG::isKnownNeverNaN(SDValue Op, bool SNaN, unsigned Depth) const 
   case ISD::SELECT:
     return isKnownNeverNaN(Op.getOperand(1), SNaN, Depth + 1) &&
            isKnownNeverNaN(Op.getOperand(2), SNaN, Depth + 1);
-  case ISD::FDIV:
-  case ISD::FREM:
-  case ISD::FSIN:
-  case ISD::FCOS: {
-    if (SNaN)
-      return true;
-    // TODO: Need isKnownNeverInfinity
-    return false;
-  }
   case ISD::FP_EXTEND:
   case ISD::FP_ROUND: {
     if (SNaN)
@@ -6655,7 +6671,7 @@ SDValue SelectionDAG::getMaskedGather(SDVTList VTs, EVT VT, const SDLoc &dl,
                                           VTs, VT, MMO);
   createOperands(N, Ops);
 
-  assert(N->getValue().getValueType() == N->getValueType(0) &&
+  assert(N->getPassThru().getValueType() == N->getValueType(0) &&
          "Incompatible type of the PassThru value in MaskedGatherSDNode");
   assert(N->getMask().getValueType().getVectorNumElements() ==
              N->getValueType(0).getVectorNumElements() &&
@@ -7091,6 +7107,27 @@ void SDNode::DropOperands() {
   }
 }
 
+void SelectionDAG::setNodeMemRefs(MachineSDNode *N,
+                                  ArrayRef<MachineMemOperand *> NewMemRefs) {
+  if (NewMemRefs.empty()) {
+    N->clearMemRefs();
+    return;
+  }
+
+  // Check if we can avoid allocating by storing a single reference directly.
+  if (NewMemRefs.size() == 1) {
+    N->MemRefs = NewMemRefs[0];
+    N->NumMemRefs = 1;
+    return;
+  }
+
+  MachineMemOperand **MemRefsBuffer =
+      Allocator.template Allocate<MachineMemOperand *>(NewMemRefs.size());
+  std::copy(NewMemRefs.begin(), NewMemRefs.end(), MemRefsBuffer);
+  N->MemRefs = MemRefsBuffer;
+  N->NumMemRefs = static_cast<int>(NewMemRefs.size());
+}
+
 /// SelectNodeTo - These are wrappers around MorphNodeTo that accept a
 /// machine opcode.
 ///
@@ -7233,7 +7270,7 @@ SDNode *SelectionDAG::MorphNodeTo(SDNode *N, unsigned Opc,
 
   // For MachineNode, initialize the memory references information.
   if (MachineSDNode *MN = dyn_cast<MachineSDNode>(N))
-    MN->setMemRefs(nullptr, nullptr);
+    MN->clearMemRefs();
 
   // Swap for an appropriately sized array from the recycler.
   removeOperands(N);

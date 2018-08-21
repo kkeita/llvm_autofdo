@@ -31,6 +31,7 @@
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/LazyValueInfo.h"
 #include "llvm/Analysis/MemoryBuiltins.h"
+#include "llvm/Analysis/MemorySSAUpdater.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/BinaryFormat/Dwarf.h"
@@ -426,22 +427,22 @@ bool llvm::wouldInstructionBeTriviallyDead(Instruction *I,
 /// trivially dead instruction, delete it.  If that makes any of its operands
 /// trivially dead, delete them too, recursively.  Return true if any
 /// instructions were deleted.
-bool
-llvm::RecursivelyDeleteTriviallyDeadInstructions(Value *V,
-                                                 const TargetLibraryInfo *TLI) {
+bool llvm::RecursivelyDeleteTriviallyDeadInstructions(
+    Value *V, const TargetLibraryInfo *TLI, MemorySSAUpdater *MSSAU) {
   Instruction *I = dyn_cast<Instruction>(V);
   if (!I || !I->use_empty() || !isInstructionTriviallyDead(I, TLI))
     return false;
 
   SmallVector<Instruction*, 16> DeadInsts;
   DeadInsts.push_back(I);
-  RecursivelyDeleteTriviallyDeadInstructions(DeadInsts, TLI);
+  RecursivelyDeleteTriviallyDeadInstructions(DeadInsts, TLI, MSSAU);
 
   return true;
 }
 
 void llvm::RecursivelyDeleteTriviallyDeadInstructions(
-    SmallVectorImpl<Instruction *> &DeadInsts, const TargetLibraryInfo *TLI) {
+    SmallVectorImpl<Instruction *> &DeadInsts, const TargetLibraryInfo *TLI,
+    MemorySSAUpdater *MSSAU) {
   // Process the dead instruction list until empty.
   while (!DeadInsts.empty()) {
     Instruction &I = *DeadInsts.pop_back_val();
@@ -468,6 +469,8 @@ void llvm::RecursivelyDeleteTriviallyDeadInstructions(
         if (isInstructionTriviallyDead(OpI, TLI))
           DeadInsts.push_back(OpI);
     }
+    if (MSSAU)
+      MSSAU->removeMemoryAccess(&I);
 
     I.eraseFromParent();
   }
@@ -655,7 +658,7 @@ void llvm::RemovePredecessorAndSimplify(BasicBlock *BB, BasicBlock *Pred,
 }
 
 /// MergeBasicBlockIntoOnlyPred - DestBB is a block with one predecessor and its
-/// predecessor is known to have one successor (DestBB!).  Eliminate the edge
+/// predecessor is known to have one successor (DestBB!). Eliminate the edge
 /// between them, moving the instructions in the predecessor into DestBB and
 /// deleting the predecessor block.
 void llvm::MergeBasicBlockIntoOnlyPred(BasicBlock *DestBB,
@@ -1930,7 +1933,8 @@ unsigned llvm::changeToUnreachable(Instruction *I, bool UseLLVMTrap,
     CallInst *CallTrap = CallInst::Create(TrapFn, "", I);
     CallTrap->setDebugLoc(I->getDebugLoc());
   }
-  new UnreachableInst(I->getContext(), I);
+  auto *UI = new UnreachableInst(I->getContext(), I);
+  UI->setDebugLoc(I->getDebugLoc());
 
   // All instructions after this are dead.
   unsigned NumInstrsRemoved = 0;
@@ -2212,7 +2216,8 @@ void llvm::removeUnwindEdge(BasicBlock *BB, DomTreeUpdater *DTU) {
 /// otherwise. If `LVI` is passed, this function preserves LazyValueInfo
 /// after modifying the CFG.
 bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
-                                   DomTreeUpdater *DTU) {
+                                   DomTreeUpdater *DTU,
+                                   MemorySSAUpdater *MSSAU) {
   SmallPtrSet<BasicBlock*, 16> Reachable;
   bool Changed = markAliveBlocks(F, Reachable, DTU);
 
@@ -2223,15 +2228,23 @@ bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
   assert(Reachable.size() < F.size());
   NumRemoved += F.size()-Reachable.size();
 
-  // Loop over all of the basic blocks that are not reachable, dropping all of
-  // their internal references. Update DTU and LVI if available.
-  std::vector <DominatorTree::UpdateType> Updates;
+  SmallPtrSet<BasicBlock *, 16> DeadBlockSet;
   for (Function::iterator I = ++F.begin(), E = F.end(); I != E; ++I) {
     auto *BB = &*I;
     if (Reachable.count(BB))
       continue;
+    DeadBlockSet.insert(BB);
+  }
+
+  if (MSSAU)
+    MSSAU->removeBlocks(DeadBlockSet);
+
+  // Loop over all of the basic blocks that are not reachable, dropping all of
+  // their internal references. Update DTU and LVI if available.
+  std::vector<DominatorTree::UpdateType> Updates;
+  for (auto *BB : DeadBlockSet) {
     for (BasicBlock *Successor : successors(BB)) {
-      if (Reachable.count(Successor))
+      if (!DeadBlockSet.count(Successor))
         Successor->removePredecessor(BB);
       if (DTU)
         Updates.push_back({DominatorTree::Delete, BB, Successor});
@@ -2240,7 +2253,6 @@ bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
       LVI->eraseBlock(BB);
     BB->dropAllReferences();
   }
-  SmallVector<BasicBlock *, 8> ToDeleteBBs;
   for (Function::iterator I = ++F.begin(); I != F.end();) {
     auto *BB = &*I;
     if (Reachable.count(BB)) {
@@ -2248,8 +2260,6 @@ bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
       continue;
     }
     if (DTU) {
-      ToDeleteBBs.push_back(BB);
-
       // Remove the TerminatorInst of BB to clear the successor list of BB.
       if (BB->getTerminator())
         BB->getInstList().pop_back();
@@ -2265,7 +2275,7 @@ bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
   if (DTU) {
     DTU->applyUpdates(Updates, /*ForceRemoveDuplicates*/ true);
     bool Deleted = false;
-    for (auto *BB : ToDeleteBBs) {
+    for (auto *BB : DeadBlockSet) {
       if (DTU->isBBPendingDeletion(BB))
         --NumRemoved;
       else
@@ -2279,7 +2289,7 @@ bool llvm::removeUnreachableBlocks(Function &F, LazyValueInfo *LVI,
 }
 
 void llvm::combineMetadata(Instruction *K, const Instruction *J,
-                           ArrayRef<unsigned> KnownIDs) {
+                           ArrayRef<unsigned> KnownIDs, bool DoesKMove) {
   SmallVector<std::pair<unsigned, MDNode *>, 4> Metadata;
   K->dropUnknownNonDebugMetadata(KnownIDs);
   K->getAllMetadataOtherThanDebugLoc(Metadata);
@@ -2315,8 +2325,9 @@ void llvm::combineMetadata(Instruction *K, const Instruction *J,
         K->setMetadata(Kind, JMD);
         break;
       case LLVMContext::MD_nonnull:
-        // Only set the !nonnull if it is present in both instructions.
-        K->setMetadata(Kind, JMD);
+        // If K does move, keep nonull if it is present in both instructions.
+        if (DoesKMove)
+          K->setMetadata(Kind, JMD);
         break;
       case LLVMContext::MD_invariant_group:
         // Preserve !invariant.group in K.
@@ -2352,6 +2363,37 @@ void llvm::combineMetadataForCSE(Instruction *K, const Instruction *J) {
       LLVMContext::MD_dereferenceable,
       LLVMContext::MD_dereferenceable_or_null};
   combineMetadata(K, J, KnownIDs);
+}
+
+void llvm::patchReplacementInstruction(Instruction *I, Value *Repl) {
+  auto *ReplInst = dyn_cast<Instruction>(Repl);
+  if (!ReplInst)
+    return;
+
+  // Patch the replacement so that it is not more restrictive than the value
+  // being replaced.
+  // Note that if 'I' is a load being replaced by some operation,
+  // for example, by an arithmetic operation, then andIRFlags()
+  // would just erase all math flags from the original arithmetic
+  // operation, which is clearly not wanted and not needed.
+  if (!isa<LoadInst>(I))
+    ReplInst->andIRFlags(I);
+
+  // FIXME: If both the original and replacement value are part of the
+  // same control-flow region (meaning that the execution of one
+  // guarantees the execution of the other), then we can combine the
+  // noalias scopes here and do better than the general conservative
+  // answer used in combineMetadata().
+
+  // In general, GVN unifies expressions over different control-flow
+  // regions, and so we need a conservative combination of the noalias
+  // scopes.
+  static const unsigned KnownIDs[] = {
+      LLVMContext::MD_tbaa,            LLVMContext::MD_alias_scope,
+      LLVMContext::MD_noalias,         LLVMContext::MD_range,
+      LLVMContext::MD_fpmath,          LLVMContext::MD_invariant_load,
+      LLVMContext::MD_invariant_group, LLVMContext::MD_nonnull};
+  combineMetadata(ReplInst, I, KnownIDs, false);
 }
 
 template <typename RootType, typename DominatesFn>

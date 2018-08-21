@@ -660,10 +660,11 @@ defm : BinRMWTruncExtPattern<
 // Atomic ternary read-modify-writes
 //===----------------------------------------------------------------------===//
 
-// TODO LLVM IR's cmpxchg instruction returns a pair of {loaded value,
-// success flag}. When we use a success flag or both values, we can't make use
-// of truncate/extend versions of instructions for now, which is suboptimal. Add
-// selection rules for those cases too.
+// TODO LLVM IR's cmpxchg instruction returns a pair of {loaded value, success
+// flag}. When we use the success flag or both values, we can't make use of i64
+// truncate/extend versions of instructions for now, which is suboptimal.
+// Consider adding a pass after instruction selection that optimizes this case
+// if it is frequent.
 
 let Defs = [ARGUMENTS] in {
 
@@ -906,8 +907,8 @@ defm : TerRMWTruncExtPattern<
 let Defs = [ARGUMENTS] in {
 let hasSideEffects = 1 in {
 defm ATOMIC_NOTIFY :
-  I<(outs I64:$dst),
-    (ins P2Align:$p2align, offset32_op:$off, I32:$addr, I64:$count),
+  I<(outs I32:$dst),
+    (ins P2Align:$p2align, offset32_op:$off, I32:$addr, I32:$count),
     (outs), (ins P2Align:$p2align, offset32_op:$off), [],
     "atomic.notify \t$dst, ${off}(${addr})${p2align}, $count",
     "atomic.notify \t${off}, ${p2align}", 0xfe00>;
@@ -931,45 +932,45 @@ defm ATOMIC_WAIT_I64 :
 let Predicates = [HasAtomics] in {
 // Select notifys with no constant offset.
 class NotifyPatNoOffset<Intrinsic kind> :
-  Pat<(i64 (kind I32:$addr, I64:$count)),
-      (ATOMIC_NOTIFY 0, 0, I32:$addr, I64:$count)>;
+  Pat<(i32 (kind I32:$addr, I32:$count)),
+      (ATOMIC_NOTIFY 0, 0, I32:$addr, I32:$count)>;
 def : NotifyPatNoOffset<int_wasm_atomic_notify>;
 
 // Select notifys with a constant offset.
 
 // Pattern with address + immediate offset
 class NotifyPatImmOff<Intrinsic kind, PatFrag operand> :
-  Pat<(i64 (kind (operand I32:$addr, imm:$off), I64:$count)),
-      (ATOMIC_NOTIFY 0, imm:$off, I32:$addr, I64:$count)>;
+  Pat<(i32 (kind (operand I32:$addr, imm:$off), I32:$count)),
+      (ATOMIC_NOTIFY 0, imm:$off, I32:$addr, I32:$count)>;
 def : NotifyPatImmOff<int_wasm_atomic_notify, regPlusImm>;
 def : NotifyPatImmOff<int_wasm_atomic_notify, or_is_add>;
 
 class NotifyPatGlobalAddr<Intrinsic kind> :
-  Pat<(i64 (kind (regPlusGA I32:$addr, (WebAssemblywrapper tglobaladdr:$off)),
-                 I64:$count)),
-      (ATOMIC_NOTIFY 0, tglobaladdr:$off, I32:$addr, I64:$count)>;
+  Pat<(i32 (kind (regPlusGA I32:$addr, (WebAssemblywrapper tglobaladdr:$off)),
+                 I32:$count)),
+      (ATOMIC_NOTIFY 0, tglobaladdr:$off, I32:$addr, I32:$count)>;
 def : NotifyPatGlobalAddr<int_wasm_atomic_notify>;
 
 class NotifyPatExternalSym<Intrinsic kind> :
-  Pat<(i64 (kind (add I32:$addr, (WebAssemblywrapper texternalsym:$off)),
-                 I64:$count)),
-      (ATOMIC_NOTIFY 0, texternalsym:$off, I32:$addr, I64:$count)>;
+  Pat<(i32 (kind (add I32:$addr, (WebAssemblywrapper texternalsym:$off)),
+                 I32:$count)),
+      (ATOMIC_NOTIFY 0, texternalsym:$off, I32:$addr, I32:$count)>;
 def : NotifyPatExternalSym<int_wasm_atomic_notify>;
 
 // Select notifys with just a constant offset.
 class NotifyPatOffsetOnly<Intrinsic kind> :
-  Pat<(i64 (kind imm:$off, I64:$count)),
-      (ATOMIC_NOTIFY 0, imm:$off, (CONST_I32 0), I64:$count)>;
+  Pat<(i32 (kind imm:$off, I32:$count)),
+      (ATOMIC_NOTIFY 0, imm:$off, (CONST_I32 0), I32:$count)>;
 def : NotifyPatOffsetOnly<int_wasm_atomic_notify>;
 
 class NotifyPatGlobalAddrOffOnly<Intrinsic kind> :
-  Pat<(i64 (kind (WebAssemblywrapper tglobaladdr:$off), I64:$count)),
-      (ATOMIC_NOTIFY 0, tglobaladdr:$off, (CONST_I32 0), I64:$count)>;
+  Pat<(i32 (kind (WebAssemblywrapper tglobaladdr:$off), I32:$count)),
+      (ATOMIC_NOTIFY 0, tglobaladdr:$off, (CONST_I32 0), I32:$count)>;
 def : NotifyPatGlobalAddrOffOnly<int_wasm_atomic_notify>;
 
 class NotifyPatExternSymOffOnly<Intrinsic kind> :
-  Pat<(i64 (kind (WebAssemblywrapper texternalsym:$off), I64:$count)),
-      (ATOMIC_NOTIFY 0, texternalsym:$off, (CONST_I32 0), I64:$count)>;
+  Pat<(i32 (kind (WebAssemblywrapper texternalsym:$off), I32:$count)),
+      (ATOMIC_NOTIFY 0, texternalsym:$off, (CONST_I32 0), I32:$count)>;
 def : NotifyPatExternSymOffOnly<int_wasm_atomic_notify>;
 
 // Select waits with no constant offset.
