@@ -23,10 +23,16 @@ using FileLineInfoKind = DILineInfoSpecifier::FileLineInfoKind;
 using FunctionNameKind = DILineInfoSpecifier::FunctionNameKind;
 
 
+cl::SubCommand  print_subcommand("print", "Print inline trees");
+cl::SubCommand  diff_subcommand("diff", "Print the difference betwen inline trees");
 
-cl::opt<std::string> Binary("binary", llvm::cl::desc( "Binary file name"),llvm::cl::Required);
-cl::list<std::string> FunctionNames(llvm::cl::desc( "functions to print"), cl::Positional,cl::ZeroOrMore);
-cl::opt<bool> PrintAll("all",llvm::cl::desc("print all functions"), cl::Optional);
+cl::opt<std::string> Binary("binary", llvm::cl::desc( "Binary file name"),llvm::cl::Required,cl::sub(*cl::AllSubCommands));
+cl::list<std::string> FunctionNames(llvm::cl::desc( "functions to print"), cl::Positional,cl::ZeroOrMore,cl::sub(*cl::AllSubCommands));
+cl::opt<bool> PrintAll("all",llvm::cl::desc("print all functions"), cl::Optional,cl::sub(*cl::AllSubCommands));
+
+cl::opt<std::string> Binary2("binary2", llvm::cl::desc( "Binary file name"),llvm::cl::Required,cl::sub(diff_subcommand));
+
+
 
 
 
@@ -42,7 +48,7 @@ class InlineTree {
 public :
     enum class DiffState { UNKNOWN,
                            EXISTING,NEW,REMOVED };
-    DiffState diff;
+    DiffState diff = DiffState::UNKNOWN;
     DWARFDie  FunctionDIE ;
     std::vector<InlineTree> children;
     unsigned int depth;
@@ -72,18 +78,16 @@ public :
 
         assert(left.isSubroutineDIE());
         assert(right.isSubroutineDIE());
-        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB;
+        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB,CallColumnA,CallColumnB;
         uint32_t unused;
-        left.getCallerFrame(unused,callLineA,unused,discriminatorA);
-        right.getCallerFrame(unused,callLineB,unused,discriminatorB);
+        left.getCallerFrame(unused,callLineA,CallColumnA,discriminatorA);
+        right.getCallerFrame(unused,callLineB,CallColumnB,discriminatorB);
 
-        return (left.getSubroutineName(DINameKind::LinkageName)
-                  == right.getSubroutineName(DINameKind::LinkageName))
-                  and std::tie(callLineA,discriminatorA) == std::tie(callLineB,discriminatorB);
+        return std::tie(callLineA,CallColumnA,discriminatorA) < std::tie(callLineB,CallColumnB,discriminatorB);
     }
 
     static InlineTree TreeDifference(InlineTree & left, InlineTree & right) {
-            assert(compare_head(left.FunctionDIE,right.FunctionDIE));
+            //assert(compare_head(left.FunctionDIE,right.FunctionDIE));
 
             InlineTree root;
             root.FunctionDIE = left.FunctionDIE;
@@ -99,7 +103,14 @@ public :
             std::vector<InlineTree> diff_childs ;
 
             for (auto & child : left.children){
-                assert(left_nodes.count(&child) == 0); //
+                if (left_nodes.count(&child) != 0) { //
+                    uint32_t callLineA, callLineB, discriminatorA, discriminatorB;
+                    uint32_t unused;
+                    child.FunctionDIE.getCallerFrame(unused, callLineA, unused, discriminatorA);
+                    (*left_nodes.find(&child))->FunctionDIE.getCallerFrame(unused, callLineB, unused, discriminatorB);
+                    assert(false);
+
+                }
                 left_nodes.insert(&child);
             }
 
@@ -130,7 +141,7 @@ public :
 static void printInlineTree(const InlineTree & tree,
                             const DWARFLineTable & LineTable,
                             std::ostream & out = std::cout,
-                            const std::string & ident_char = "\t") {
+                            const std::string & ident_char = " ") {
 
         // Tree and level for printing
         // a std::stack would have been sufficient here, but since we also sort the element inplace
@@ -158,11 +169,11 @@ static void printInlineTree(const InlineTree & tree,
         auto die_compare  = [](const  DWARFDie & a, const  DWARFDie & b) {
            assert(a.isSubroutineDIE());
             assert(b.isSubroutineDIE());
-        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB;
+        uint32_t  callLineA,callLineB,discriminatorA,discriminatorB,CallColumnA,CallColumnB;
         uint32_t unused;
-        a.getCallerFrame(unused,callLineA,unused,discriminatorA);
-        b.getCallerFrame(unused,callLineB,unused,discriminatorB);
-        return std::tie(callLineA,discriminatorA) < std::tie(callLineB,discriminatorB);
+        a.getCallerFrame(unused,callLineA,CallColumnA,discriminatorA);
+        b.getCallerFrame(unused,callLineB,CallColumnB,discriminatorB);
+        return std::tie(callLineA,CallColumnA,discriminatorA) < std::tie(callLineB,CallColumnB,discriminatorB);
         };
 
         std::map<DiffState , std::string> diffmap = {{DiffState::NEW, "+"},
@@ -212,7 +223,7 @@ static void printInlineTree(const InlineTree & tree,
             //this is an inlined subroutine
             uint32_t CallFile, CallLine, CallColumn, CallDiscriminator;
             FunctionDIE.getCallerFrame(CallFile,CallLine,CallColumn,CallDiscriminator);
-            out <<  name  << " : " <<  CallLine << " : " << CallDiscriminator;
+            out <<  name  << " : " <<  CallLine <<  " : " << CallColumn << " : " << CallDiscriminator;
         }
     }
 };
@@ -248,9 +259,43 @@ static DILineInfo getLineInfo(const DWARFDie & die, const DWARFLineTable & LineT
 
 }
 
-int main(int argc, char **argv)  {
 
-    llvm::cl::ParseCommandLineOptions(argc,argv,"");
+
+std::map<std::string,std::pair<InlineTree,DWARFUnit *>> build_trees(DWARFContext & debugContext,
+                                    const std::set<std::string> & functions_to_extract) {
+
+    bool filter = not functions_to_extract.empty();
+
+    std::map<std::string,std::pair<InlineTree,DWARFUnit *>> ret;
+    for (const auto & compilationUnit : debugContext.compile_units()) {
+        //scan for all top level subroutine entries in the given compilation unit
+        for (auto const & die : compilationUnit->getUnitDIE(false).children()){
+            if(!die.isSubprogramDIE() or !die.hasChildren() or (die.getSubroutineName(DINameKind::LinkageName) == nullptr)) continue ;
+
+            //we should fail on non contiguous functions
+            if (auto err = die.getAddressRanges())
+                assert(err.get().size() < 2);
+
+            //We already seen this function, can happens when a function is in multiple compilation unit
+            if(ret.count(die.getSubroutineName(DINameKind::LinkageName)) != 0)
+                continue;
+
+            if (filter and (functions_to_extract.count(die.getSubroutineName(DINameKind::LinkageName)) == 0))
+                continue;
+
+            InlineTree tree(die);
+            ret.insert(std::make_pair(std::string(die.getSubroutineName(DINameKind::LinkageName)),
+                                      std::make_pair(tree,&*compilationUnit)));
+        };
+
+
+    }
+
+    return std::move(ret);
+
+}
+
+void print_main() {
 
     // Getting a debug context
     auto context_  = getDebugContext(Binary);
@@ -259,36 +304,60 @@ int main(int argc, char **argv)  {
     std::ostream & ss  = std::cout;
 
     std::set<std::string> functions(FunctionNames.begin(),FunctionNames.end());
-    std::set<std::string> printed_functions;
 
-    for (const auto & compilationUnit : debugContext->compile_units()) {
-        const DWARFLineTable & LineTable = *debugContext->getLineTableForUnit(compilationUnit.get());
-
-        //scan for all top level subroutine entries in the given compilation unit
-        for (auto const & die : compilationUnit->getUnitDIE(false).children()){
-            if(!die.isSubprogramDIE() or !die.hasChildren() or (die.getSubroutineName(DINameKind::LinkageName) == nullptr)) continue ;
-
-            /*
-             * Don't print if the functions has already been printed (happens when the functions is in multiple CUs,
-             * or if the function hasn't been requested
-             * */
-            if( not (PrintAll) and
-                ( (functions.count(die.getSubroutineName(DINameKind::LinkageName)) == 0) or
-                 printed_functions.count(die.getSubroutineName(DINameKind::LinkageName)) != 0 )) continue ;
-
-            //we should fail on non contiguous functions
-            if (auto err = die.getAddressRanges())
-                assert(err.get().size() < 2);
-
-            InlineTree tree(die);
-            //Avoid noisy output
-            if (tree.depth == 0) continue;
-            ss << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName) <<std::endl;
-            printed_functions.insert(die.getSubroutineName(DINameKind::LinkageName));
-            InlineTree::printInlineTree(die,LineTable);
-        };
+    auto trees = build_trees(*debugContext,functions);
 
 
+    for (auto const & p : trees ) {
+        auto & compilationUnit =  p.second.second;
+        auto & tree = p.second.first;
+        auto function_name = p.first;
+        const DWARFLineTable & LineTable = *debugContext->getLineTableForUnit(compilationUnit);
+        ss << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName) <<std::endl;
+        InlineTree::printInlineTree(tree,LineTable);
+    }
+}
+
+void diff_main(){
+    // Getting a debug context
+    auto context1_  = getDebugContext(Binary);
+    auto debugContext1 = std::move(context1_.first) ;
+
+    auto context2_  = getDebugContext(Binary2);
+    auto debugContext2 = std::move(context2_.first) ;
+
+    std::ostream & ss  = std::cout;
+
+    std::set<std::string> functions(FunctionNames.begin(),FunctionNames.end());
+
+    auto trees1 = build_trees(*debugContext1,functions);
+    auto trees2 = build_trees(*debugContext2,functions);
+
+    for (auto & p : trees1) {
+        const DWARFLineTable & LineTable = *debugContext1->getLineTableForUnit(p.second.second);
+        ss << p.second.first.FunctionDIE.getSubroutineName(DINameKind::LinkageName) << std::endl ;
+        InlineTree::printSubroutineDie(p.second.first.FunctionDIE, LineTable,ss);
+        InlineTree::printSubroutineDie(trees2[p.first].first.FunctionDIE, LineTable, ss);
+        ss.flush();
+        InlineTree tree = InlineTree::TreeDifference(p.second.first, trees2[p.first].first);
+        InlineTree::printInlineTree(tree,LineTable);
+    }
+
+
+
+}
+int main(int argc, char **argv)  {
+
+    llvm::cl::ParseCommandLineOptions(argc,argv,"");
+
+    if (print_subcommand){
+        print_main();
+        return 0;
+    };
+
+    if (diff_subcommand){
+        diff_main();
+        return 0;
     }
 
 }
