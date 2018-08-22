@@ -15,6 +15,7 @@
 #include <iterator>
 #include <set>
 #include <map>
+
 using namespace llvm;
 using namespace std;
 
@@ -24,22 +25,18 @@ using FunctionNameKind = DILineInfoSpecifier::FunctionNameKind;
 
 
 cl::SubCommand  print_subcommand("print", "Print inline trees");
-cl::SubCommand  diff_subcommand("diff", "Print the difference betwen inline trees");
+cl::SubCommand  diff_subcommand("diff", "Print the difference between inline trees");
 
 cl::opt<std::string> Binary("binary", llvm::cl::desc( "Binary file name"),llvm::cl::Required,cl::sub(*cl::AllSubCommands));
 cl::list<std::string> FunctionNames(llvm::cl::desc( "functions to print"), cl::Positional,cl::ZeroOrMore,cl::sub(*cl::AllSubCommands));
 cl::opt<bool> PrintAll("all",llvm::cl::desc("print all functions"), cl::Optional,cl::sub(*cl::AllSubCommands));
 
-cl::opt<std::string> Binary2("binary2", llvm::cl::desc( "Binary file name"),llvm::cl::Required,cl::sub(diff_subcommand));
+cl::opt<std::string> Binary2("binary2", llvm::cl::desc( "Second binary to compare with"),llvm::cl::Required,cl::sub(diff_subcommand));
 
 
 
 
 
-/*
- * Represent an inline tree
- *
- * */
 
 static  const DILineInfoSpecifier infoSpec { FileLineInfoKind::Default, DINameKind::LinkageName};
 
@@ -53,15 +50,17 @@ public :
     DiffState diff = DiffState::UNKNOWN;
 
     DWARFDie  FunctionDIE;
+    const DWARFLineTable & LineTable ; //Required for printing ;
     std::vector<InlineTree> children;
+
     unsigned int depth;
 
-    InlineTree() {};
-    InlineTree(const DWARFDie & rootDie) : FunctionDIE(rootDie), depth(0){
+    InlineTree(const DWARFDie & rootDie,const DWARFLineTable & LineTable) : FunctionDIE(rootDie),
+                            depth(0), LineTable(LineTable), children(){
         for (auto const & child : FunctionDIE.children()){
             if (!child.isSubroutineDIE() or  (child.getSubroutineName(DINameKind::LinkageName) == nullptr))
                 continue ;
-            children.push_back({child});
+            children.push_back({child,LineTable});
         }
         if (!children.empty())
             depth = std::max_element(children.begin(),children.end(),
@@ -70,13 +69,11 @@ public :
     };
 
 
+
     /*
-     * Return true if the head of both trees is the same;
-     * We essentially compare the DWARFDie to make sure they represent the same inlined
-     *  instance ie same function inlined at the same target location
-     *
+     * Central comparison function for both sorting and equality testing;
+     * We sorted by code location first, then by name ;
      * */
-    //TODO: unify this with die_compare;
     static bool compare_die(const DWARFDie &left, const DWARFDie &right) {
 
         assert(left.isSubroutineDIE());
@@ -85,30 +82,51 @@ public :
         uint32_t unused;
         left.getCallerFrame(unused,callLineA,CallColumnA,discriminatorA);
         right.getCallerFrame(unused,callLineB,CallColumnB,discriminatorB);
-
-        return std::tie(callLineA,CallColumnA,discriminatorA) < std::tie(callLineB,CallColumnB,discriminatorB);
+        auto namea = left.getSubroutineName(DINameKind::LinkageName);
+        auto nameb = right.getSubroutineName(DINameKind::LinkageName);
+        return std::tie(callLineA,CallColumnA,discriminatorA,namea)
+                 < std::tie(callLineB,CallColumnB,discriminatorB,nameb);
     }
 
-    static InlineTree TreeDifference(InlineTree & left, InlineTree & right) {
-            InlineTree root;
-            root.FunctionDIE = left.FunctionDIE;
+    /*
+     * Compute the difference between two inline trees;
+     *
+     * */
+    static InlineTree TreeDifference(const InlineTree & left,const  InlineTree & right) {
+            InlineTree root{left.FunctionDIE,left.LineTable};
             root.diff = DiffState::EXISTING;
 
 
             // matching child nodes;
+
+
             auto compare = [](const InlineTree  * left,const InlineTree * right) { return compare_die(
                     left->FunctionDIE, right->FunctionDIE) ;};
 
-            std::multiset<InlineTree *, decltype(compare)> right_nodes(compare) ;
-            std::multiset<InlineTree *, decltype(compare)> left_nodes(compare) ;
+            auto update_diff_state = [](InlineTree & tree, DiffState new_state){
+                std::stack<InlineTree *> stack ;
+                stack.push(&tree);
+                while(!stack.empty()){
+                    auto top = stack.top();
+                    stack.pop();
+                    top->diff = new_state ;
+                    for (auto & child : top->children){
+                        stack.push(&child);
+                    }
+                }
+            };
+
+
+            std::multiset<const InlineTree *, decltype(compare)> right_nodes(compare) ;
+            std::multiset<const InlineTree *, decltype(compare)> left_nodes(compare) ;
 
             std::vector<InlineTree> diff_childs ;
 
-            for (auto & child : left.children){
+            for (const auto & child : left.children){
                 left_nodes.insert(&child);
             }
 
-            for (auto & child : right.children){
+            for (const auto & child : right.children){
                 if (left_nodes.count(&child) > 0) {
                     //exiting node in both tree
                     auto exist_nodes = TreeDifference(**left_nodes.find(&child), child);
@@ -117,23 +135,24 @@ public :
                 } else {
                     // node not in the right but not in the left tree
                     InlineTree newNode = child;
-                    newNode.diff = DiffState::NEW;
+                    update_diff_state(newNode,DiffState::NEW);
                     diff_childs.push_back(std::move(newNode));
                 }
 
             }
 
+            //Node in the left tree, but not in the right tree
             for (auto & child : left_nodes){
                 InlineTree removedNode = *child;
-                removedNode.diff = DiffState::REMOVED;
+                update_diff_state(removedNode,DiffState::REMOVED);
                 diff_childs.push_back(std::move(removedNode));
             }
+
             root.children = std::move(diff_childs);
             return root;
     }
 
 static void printInlineTree(const InlineTree & tree,
-                            const DWARFLineTable & LineTable,
                             std::ostream & out = std::cout,
                             const std::string & ident_char = " ") {
 
@@ -160,10 +179,10 @@ static void printInlineTree(const InlineTree & tree,
         };
 
 
-        std::map<DiffState , std::string> diffmap = {{DiffState::NEW, " + "},
-                                                   {DiffState::EXISTING, " <> "},
-                                                   {DiffState::REMOVED, " - "},
-                                                   {DiffState::UNKNOWN," U "}};
+        std::map<DiffState , std::string> diffmap = {{DiffState::NEW, "+"},
+                                                   {DiffState::EXISTING, "="},
+                                                   {DiffState::REMOVED, "-"},
+                                                   {DiffState::UNKNOWN,"*"}};
 
         //Iterative depth traversal
 
@@ -172,7 +191,7 @@ static void printInlineTree(const InlineTree & tree,
             auto  tree  = trees.back().first;
             out << get_indent_string(level);
             out << diffmap[tree.get().diff];
-            printSubroutineDie(tree.get().FunctionDIE,LineTable,out);
+            printSubroutineDie(tree.get().FunctionDIE,tree.get().LineTable,out);
             out << "\n";
             trees.pop_back();
 
@@ -217,32 +236,24 @@ static void printInlineTree(const InlineTree & tree,
 
 //get the corresponding debug context or fails terminally
 static std::pair<std::unique_ptr<DWARFContext>,object::OwningBinary<object::Binary>> getDebugContext(std::string & path) {
-    auto expected_file = object::createBinary(Binary);
+    auto expected_file = object::createBinary(path);
     if (!expected_file) {
-        llvm::errs() << "Couldnt open " << Binary;
+        llvm::errs() << "Couldnt open " << path;
         exit(-1);
 
     // We don't stric;y need to retrict it here to elf64
     } else if (!llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(expected_file.get().getBinary())) {
-        llvm::errs() << "Wrong file format  " << Binary;
+        llvm::errs() << "Wrong file format  " << path;
         exit(-1);
     }
 
     //auto p  = expected_file.get().takeBinary().first.release();
         auto context = DWARFContext::create(*llvm::dyn_cast<llvm::object::ELF64LEObjectFile>(expected_file.get().getBinary()));
         if (context == nullptr) {
-            llvm::errs() << "Failed to load debug info for  " << Binary;
+            llvm::errs() << "Failed to load debug info for  " << path;
         }
         return make_pair(std::move(context), std::move(expected_file.get())) ;
 }
-
-
-
-
-static DILineInfo getLineInfo(const DWARFDie & die, const DWARFLineTable & LineTable) {
-
-}
-
 
 
 std::map<std::string,std::pair<InlineTree,DWARFUnit *>> build_trees(DWARFContext & debugContext,
@@ -252,7 +263,9 @@ std::map<std::string,std::pair<InlineTree,DWARFUnit *>> build_trees(DWARFContext
 
     std::map<std::string,std::pair<InlineTree,DWARFUnit *>> ret;
     for (const auto & compilationUnit : debugContext.compile_units()) {
+
         //scan for all top level subroutine entries in the given compilation unit
+        const DWARFLineTable & LineTable = *debugContext.getLineTableForUnit(compilationUnit.get());
         for (auto const & die : compilationUnit->getUnitDIE(false).children()){
             if(!die.isSubprogramDIE() or !die.hasChildren() or (die.getSubroutineName(DINameKind::LinkageName) == nullptr)) continue ;
 
@@ -260,14 +273,15 @@ std::map<std::string,std::pair<InlineTree,DWARFUnit *>> build_trees(DWARFContext
             if (auto err = die.getAddressRanges())
                 assert(err.get().size() < 2);
 
-            //We already seen this function, can happens when a function is in multiple compilation unit
+            //We already seen this function, this happens when a function is in multiple compilation unit,
+            //typically through header files inclusion
             if(ret.count(die.getSubroutineName(DINameKind::LinkageName)) != 0)
                 continue;
 
             if (filter and (functions_to_extract.count(die.getSubroutineName(DINameKind::LinkageName)) == 0))
                 continue;
 
-            InlineTree tree(die);
+            InlineTree tree{die,LineTable};
             ret.insert(std::make_pair(std::string(die.getSubroutineName(DINameKind::LinkageName)),
                                       std::make_pair(tree,&*compilationUnit)));
         };
@@ -296,18 +310,21 @@ void print_main() {
         auto & compilationUnit =  p.second.second;
         auto & tree = p.second.first;
         auto function_name = p.first;
-        const DWARFLineTable & LineTable = *debugContext->getLineTableForUnit(compilationUnit);
         ss << "compilation unit " << compilationUnit->getUnitDIE(false).getName(DINameKind::ShortName) <<std::endl;
-        InlineTree::printInlineTree(tree,LineTable);
+        InlineTree::printInlineTree(tree);
     }
 }
 
 void diff_main(){
+    std::cout << std::string(Binary) << std::endl ;
+    std::cout << std::string(Binary2) << std::endl ;
+
     // Getting a debug context
     auto context1_  = getDebugContext(Binary);
     auto debugContext1 = std::move(context1_.first) ;
 
     auto context2_  = getDebugContext(Binary2);
+    //std::cout << "file name : " << std::string(context2_.second.getBinary()->getFileName()) << std::endl;
     auto debugContext2 = std::move(context2_.first) ;
 
     std::ostream & ss  = std::cout;
@@ -317,13 +334,18 @@ void diff_main(){
     auto trees1 = build_trees(*debugContext1,functions);
     auto trees2 = build_trees(*debugContext2,functions);
 
+
     for (auto & p : trees1) {
-        const DWARFLineTable & LineTable = *debugContext1->getLineTableForUnit(p.second.second);
-        InlineTree tree = InlineTree::TreeDifference(p.second.first, trees2[p.first].first);
-        InlineTree::printInlineTree(tree,LineTable);
+        auto it =  trees2.find(p.first);
+        if (it == trees2.end())
+            continue;
+        InlineTree tree = InlineTree::TreeDifference(p.second.first,it->second.first);
+        InlineTree::printInlineTree(tree);
     }
 
 }
+
+
 int main(int argc, char **argv)  {
 
     llvm::cl::ParseCommandLineOptions(argc,argv,"");
